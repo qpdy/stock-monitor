@@ -4,7 +4,7 @@
     "cron": "50 8 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/pre_market.md",
     "deliver": "weixin",
-    "context_from": "北部湾港-收盘复盘"
+    "continuity": true
   },
   {
     "name": "北部湾港-竞价初始",
@@ -48,7 +48,7 @@
     "cron": "0 18 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/closing_review.md",
     "deliver": "weixin",
-    "context_from": "北部湾港-盘前情报"
+    "continuity": true
   },
   {
     "name": "北部湾港-晚间风险预警",

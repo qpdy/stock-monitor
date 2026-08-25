@@ -19,16 +19,13 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "❌ 错误：未找到 python3，deploy 脚本依赖 python3 解析 JSON"; exit 1; }
 [[ -f "$CONFIG" ]] || { echo "❌ 错误：配置文件不存在 $CONFIG"; exit 1; }
 
-# 若你的 hermes 版本删除任务需要 --name 参数，执行 HERMES_DELETE_ARGS=--name bash deploy.sh
-DELETE_ARGS="${HERMES_DELETE_ARGS:-}"
-
 # 用 python3 解析 JSON 并调用 hermes：prompt 中含单引号/双引号/emoji，
 # 经 subprocess 列表传参可完全绕开 shell 转义问题
-python3 - "$CONFIG" "$SCRIPT_DIR" "${DRY_RUN:-0}" "${REPLACE:-0}" "$DELETE_ARGS" <<'PYEOF'
+python3 - "$CONFIG" "$SCRIPT_DIR" "${DRY_RUN:-0}" "${REPLACE:-0}" <<'PYEOF'
 import json, os, subprocess, sys
 
 config_path, base_dir = sys.argv[1], sys.argv[2]
-dry_run, replace, delete_args = sys.argv[3] == "1", sys.argv[4] == "1", sys.argv[5]
+dry_run, replace = sys.argv[3] == "1", sys.argv[4] == "1"
 
 try:
     with open(config_path, encoding="utf-8") as f:
@@ -73,25 +70,26 @@ for i, task in enumerate(tasks, 1):
     if disclaimer:
         prompt = prompt + "\n\n" + disclaimer
 
-    cmd = ["hermes", "cron", "create", task["cron"], "--prompt", prompt, "--name", name]
+    # hermes cron create 用法: schedule [prompt] —— cron 表达式和 prompt 均为位置参数
+    cmd = ["hermes", "cron", "create", task["cron"], prompt, "--name", name]
     if task.get("deliver"):
         cmd += ["--deliver", task["deliver"]]
-    if task.get("context_from"):
-        cmd += ["--context_from", task["context_from"]]
+    if task.get("continuity"):
+        cmd += ["--continuity"]
 
     print(f"[{i}/{len(tasks)}] {'DRY-RUN' if dry_run else '部署'}: {name}  ({task['cron']})")
     if dry_run:
         extra = ""
         if task.get("deliver"):
             extra += f" --deliver {task['deliver']}"
-        if task.get("context_from"):
-            extra += f" --context_from \"{task['context_from']}\""
+        if task.get("continuity"):
+            extra += " --continuity"
         if replace:
             for old in [name] + task.get("replaces", []):
-                del_preview = " ".join(["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [old])
+                del_preview = " ".join(["hermes", "cron", "remove", old])
                 print(f"    将先执行: {del_preview}")
-        print(f"    将执行: hermes cron create \"{task['cron']}\" --prompt <{len(prompt)}字"
-              + ("（含公共声明）" if disclaimer else "") + f"> --name \"{name}\"" + extra)
+        print(f"    将执行: hermes cron create \"{task['cron']}\" \"<{len(prompt)}字"
+              + ("（含公共声明）" if disclaimer else "") + f" prompt>\" --name \"{name}\"" + extra)
         done.append(name)
         continue
 
@@ -99,7 +97,7 @@ for i, task in enumerate(tasks, 1):
     if replace:
         old_names = [name] + task.get("replaces", [])
         for old in old_names:
-            del_cmd = ["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [old]
+            del_cmd = ["hermes", "cron", "remove", old]
             r = subprocess.run(del_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if r.returncode == 0:
                 print(f"    ↻ 已删除旧任务: {old}")

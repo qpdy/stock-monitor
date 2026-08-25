@@ -25,21 +25,21 @@ stock-monitor/
 │       ├── closing_review.md        # 收盘复盘      18:00
 │       └── evening_alert.md         # 晚间风险预警   21:30
 └── config/
-    └── schedule.json                # 所有任务的 cron / name / deliver / context_from 配置
+    └── schedule.json                # 所有任务的 cron / name / deliver / continuity 配置
 ```
 
 ## 已配置任务一览（000582 北部湾港）
 
-| 任务名 | cron | 说明 | context_from |
+| 任务名 | cron | 说明 | 上下文 |
 |---|---|---|---|
-| 北部湾港-盘前情报 | `50 8 * * 1,2,3,4,5` | 搜索整理隔夜利好/利空，平陆运河进展优先 | 收盘复盘 |
+| 北部湾港-盘前情报 | `50 8 * * 1,2,3,4,5` | 搜索整理隔夜利好/利空，平陆运河进展优先 | 自身上次输出（--continuity） |
 | 北部湾港-竞价初始 | `16 9 * * 1,2,3,4,5` | 集合竞价初始虚拟价格 | — |
 | 北部湾港-竞价结果 | `25 9 * * 1,2,3,4,5` | 竞价最终开盘价与量 | — |
 | 北部湾港-开盘首笔 | `30 9 * * 1,2,3,4,5` | 连续竞价首笔成交 | — |
 | 北部湾港-盘中监控 | `5 10,11,13,14 * * 1,2,3,4,5` | 涨跌幅超 ±5% 才推送，否则 [SILENT] | — |
 | 北部湾港-午间舆情 | `40 12 * * 1,2,3,4,5` | 午间利空公告扫描，无则 [SILENT] | — |
 | 北部湾港-盘中监控-尾盘 | `50 14 * * 1,2,3,4,5` | 尾盘异动监控，逻辑同整点 | — |
-| 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 盘前情报 |
+| 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 自身上次输出（--continuity） |
 | 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空公告扫描，无则 [SILENT] | — |
 
 行情数据统一来自腾讯财经接口 `https://qt.gtimg.cn/q=sz000582`（`~` 分隔，fields[3]=现价、fields[4]=昨收、fields[32]=涨跌幅、fields[30]=快照时间戳（交易日判断依据）等）。
@@ -62,10 +62,9 @@ ssh user@server 'cd ~/stock-monitor && bash deploy.sh && hermes cron list'
 
 日后本地改完 prompt，重复上面两步即可（第二步改用 `REPLACE=1 bash deploy.sh` 直接更新，不产生重复任务）。
 
-> **上线第一天必做**：先跑 `hermes cron delete --help` 确认删除任务的参数形式。
-> 若需要 `--name`，**立即把结论固化**：把 `deploy.sh` 和 `undeploy.sh` 里的
-> `DELETE_ARGS="${HERMES_DELETE_ARGS:-}"` 默认值改为 `"--name"`。
-> 不固化的话，`REPLACE=1` 部署时忘带 `HERMES_DELETE_ARGS=--name` 会静默产生全套重复任务。
+> **本服务器 hermes 实测（2026-08-25）**：cron 任务创建用位置参数传 prompt（`hermes cron create "<cron>" "<prompt>" --name ...`），
+> `--deliver weixin` 合法，删除命令为 `hermes cron remove <任务名|job_id>`（任务名与 job_id 均接受）。
+> `deploy.sh` / `undeploy.sh` 已按此适配，不支持 `--context_from`（跨任务上下文），改用 `--continuity`（任务自身上次输出注入）。
 
 ## 部署步骤
 
@@ -77,7 +76,7 @@ REPLACE=1 bash deploy.sh    # 更新部署：自动删除同名旧任务后重�
 脚本会：
 1. 检查 `hermes`、`python3` 依赖；
 2. 逐个读取 `config/schedule.json` 中的任务配置；
-3. 把 `tasks/` 下对应 `.md` 文件全文作为 `--prompt`，连同 `--name`、`--deliver`、`--context_from` 执行 `hermes cron create`；
+3. 把 `tasks/` 下对应 `.md` 文件全文作为 prompt（位置参数），连同 `--name`、`--deliver`、`--continuity` 执行 `hermes cron create`；
 4. 结束时汇总成功/失败任务数，任一失败以非零码退出。
 
 部署后复核：
@@ -134,7 +133,7 @@ DRY_RUN=1 bash undeploy.sh
 
 ## 注意事项
 
-- `undeploy.sh` 默认按 `hermes cron delete <任务名>` 传参；若你的 hermes 版本要求 `--name`，执行 `HERMES_DELETE_ARGS=--name bash undeploy.sh` 即可。
+- 删除任务用 `hermes cron remove <任务名|job_id>`（两者均可），`undeploy.sh` 已按此适配。
 - 盘中监控/午间舆情/晚间风险预警为静默型任务：无异常时回复 `[SILENT]` 不推送，收不到消息属正常现象。
 - 盘中监控刻意安排在每小时过 5 分而非整点触发：13:00 整恰逢午休结束，接口快照仍是上午收盘数据；整点也是行情接口的访问高峰。
 - **交易日判断**：除晚间风险预警外的 8 个任务均内置非交易日防护——接口时间戳（fields[30]）非当日即回复"跳过"，**节假日/休市日收不到推送是设计行为**，不是故障。

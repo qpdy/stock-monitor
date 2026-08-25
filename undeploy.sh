@@ -17,13 +17,10 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "❌ 错误：未找到 python3，undeploy 脚本依赖 python3 解析 JSON"; exit 1; }
 [[ -f "$CONFIG" ]] || { echo "❌ 错误：配置文件不存在 $CONFIG"; exit 1; }
 
-# 若你的 hermes 版本删除任务需要 --name 参数，把下面 DELETE_ARGS 改为 "--name" 即可
-DELETE_ARGS="${HERMES_DELETE_ARGS:-}"
-
-python3 - "$CONFIG" "${DRY_RUN:-0}" "$DELETE_ARGS" <<'PYEOF'
+python3 - "$CONFIG" "${DRY_RUN:-0}" <<'PYEOF'
 import json, subprocess, sys
 
-config_path, dry_run, delete_args = sys.argv[1], sys.argv[2] == "1", sys.argv[3]
+config_path, dry_run = sys.argv[1], sys.argv[2] == "1"
 
 try:
     with open(config_path, encoding="utf-8") as f:
@@ -43,7 +40,7 @@ for task in tasks:
 
 failed, done = [], []
 for i, name in enumerate(all_names, 1):
-    cmd = ["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [name]
+    cmd = ["hermes", "cron", "remove", name]
 
     print(f"[{i}/{len(all_names)}] {'DRY-RUN' if dry_run else '删除'}: {name}")
     if dry_run:
