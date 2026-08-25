@@ -87,21 +87,28 @@ for i, task in enumerate(tasks, 1):
         if task.get("context_from"):
             extra += f" --context_from \"{task['context_from']}\""
         if replace:
-            del_preview = " ".join(["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [name])
-            print(f"    将先执行: {del_preview}")
+            for old in [name] + task.get("replaces", []):
+                del_preview = " ".join(["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [old])
+                print(f"    将先执行: {del_preview}")
         print(f"    将执行: hermes cron create \"{task['cron']}\" --prompt <{len(prompt)}字"
               + ("（含公共声明）" if disclaimer else "") + f"> --name \"{name}\"" + extra)
         done.append(name)
         continue
 
-    # REPLACE 模式：先删同名旧任务；删除失败不阻断（旧任务可能本来就不存在）
+    # REPLACE 模式：先删同名旧任务及 replaces 声明的历史任务名；删除失败不阻断（旧任务可能本来就不存在）
     if replace:
-        del_cmd = ["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [name]
-        r = subprocess.run(del_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if r.returncode == 0:
-            print("    ↻ 已删除旧任务")
-        else:
-            print("    ↻ 无同名旧任务，直接创建")
+        old_names = [name] + task.get("replaces", [])
+        for old in old_names:
+            del_cmd = ["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [old]
+            r = subprocess.run(del_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if r.returncode == 0:
+                print(f"    ↻ 已删除旧任务: {old}")
+            else:
+                err = (r.stderr.strip() or r.stdout.strip() or "")
+                if err:
+                    print(f"    ⚠️ 删除旧任务 {old} 失败（若为任务不存在可忽略）: {err}")
+                else:
+                    print(f"    ↻ 无同名旧任务 {old}，直接创建")
 
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode == 0:

@@ -34,12 +34,18 @@ except json.JSONDecodeError as e:
 
 print(f"📋 从 schedule.json 读取到 {len(tasks)} 个任务\n")
 
+# 展开任务名及其 replaces 声明的历史任务名，去重保持顺序
+all_names = []
+for task in tasks:
+    for n in [task["name"]] + task.get("replaces", []):
+        if n not in all_names:
+            all_names.append(n)
+
 failed, done = [], []
-for i, task in enumerate(tasks, 1):
-    name = task["name"]
+for i, name in enumerate(all_names, 1):
     cmd = ["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [name]
 
-    print(f"[{i}/{len(tasks)}] {'DRY-RUN' if dry_run else '删除'}: {name}")
+    print(f"[{i}/{len(all_names)}] {'DRY-RUN' if dry_run else '删除'}: {name}")
     if dry_run:
         print(f"    将执行: {' '.join(cmd)}")
         done.append(name)

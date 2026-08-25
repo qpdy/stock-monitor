@@ -8,7 +8,7 @@
   },
   {
     "name": "北部湾港-竞价初始",
-    "cron": "15 9 * * 1,2,3,4,5",
+    "cron": "16 9 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/auction_init.md",
     "deliver": "weixin"
   },
@@ -25,10 +25,11 @@
     "deliver": "weixin"
   },
   {
-    "name": "北部湾港-盘中监控-整点",
-    "cron": "0 10,11,13,14 * * 1,2,3,4,5",
+    "name": "北部湾港-盘中监控",
+    "cron": "5 10,11,13,14 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/intraday_monitor.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "replaces": ["北部湾港-盘中监控-整点"]
   },
   {
     "name": "北部湾港-午间舆情",
