@@ -46,21 +46,21 @@ stock-monitor/
 
 ## 部署到服务器
 
-本地开发机无需安装 hermes（用 DRY_RUN 校验即可），正式部署在服务器上执行：
+本地开发机无需安装 hermes（用 DRY_RUN 校验即可），正式部署在服务器上执行。
+代码通过 GitHub 同步（仓库已设公开，HTTPS 匿名可读，服务器无需配置任何凭证）：
 
 ```bash
 # 0. 确认服务器时区为北京时间（cron 按服务器本地时间执行，UTC 时区会导致全天任务错位）
-ssh user@server 'date && timedatectl 2>/dev/null | grep Timezone'
-#    若非 Asia/Shanghai：sudo timedatectl set-timezone Asia/Shanghai
+#    服务器上执行 date 查看，若非 CST/Asia/Shanghai：sudo timedatectl set-timezone Asia/Shanghai
 
-# 1. 上传项目（排除 macOS 系统文件）
-rsync -a --exclude '.DS_Store' stock-monitor/ user@server:~/stock-monitor/
+# 1. 服务器上 clone（需已安装并登录 hermes）
+git clone https://github.com/qpdy/stock-monitor.git ~/stock-monitor
 
-# 2. 服务器上部署（需已安装并登录 hermes）
-ssh user@server 'cd ~/stock-monitor && bash deploy.sh && hermes cron list'
+# 2. 部署 + 复核
+cd ~/stock-monitor && bash deploy.sh && hermes cron list
 ```
 
-日后本地改完 prompt，重复上面两步即可（第二步改用 `REPLACE=1 bash deploy.sh` 直接更新，不产生重复任务）。
+日后本地改完代码：先 `git push origin main`，再在服务器上 `cd ~/stock-monitor && git pull && REPLACE=1 bash deploy.sh` 更新（详见下方"修改 prompt 的流程"）。
 
 > **本服务器 hermes 实测（2026-08-25）**：cron 任务创建用位置参数传 prompt（`hermes cron create "<cron>" "<prompt>" --name ...`），
 > `--deliver weixin` 合法，删除命令为 `hermes cron remove <任务名|job_id>`（任务名与 job_id 均接受）。
@@ -95,10 +95,11 @@ hermes cron list    # 确认任务已删除
 ## 修改 prompt 的流程
 
 1. 直接编辑 `tasks/<股票代码>/` 下对应 `.md` 文件（纯文本，无需关心 shell 转义）；公共免责声明统一改 `tasks/_common/disclaimer.md`，部署时自动追加到每个 prompt 末尾；
-2. 一键更新生效：
+2. 本地提交并推送：`git add -A && git commit -m "说明改动" && git push origin main`
+3. 服务器上拉取并更新部署：
 
 ```bash
-REPLACE=1 bash deploy.sh   # 自动删除同名旧任务后重新创建，无重复风险
+cd ~/stock-monitor && git pull && REPLACE=1 bash deploy.sh   # 自动删除同名旧任务后重新创建，无重复风险
 ```
 
 > hermes 的 cron create 是"新建"语义，直接重复执行 `bash deploy.sh` 可能产生重复任务；更新场景务必用 `REPLACE=1`，或先 `bash undeploy.sh` 清理。
