@@ -108,6 +108,18 @@ cd ~/stock-monitor && git pull && REPLACE=1 bash deploy.sh   # 自动删除同�
 
 **任务改名**：若给任务改了名字（如 `北部湾港-盘中监控-整点` → `北部湾港-盘中监控`），在该任务配置中加 `"replaces": ["旧任务名"]`，部署和清理脚本会自动连带删除旧名任务，避免遗留重复任务。
 
+### 自动更新（可选）
+
+服务器上配一次 crontab，之后每天 08:10 自动检查 GitHub 是否有新提交，**有才执行** `git pull + REPLACE=1 bash deploy.sh`（无新提交时跳过，不会天天删建任务、打断 `--continuity` 历史），赶在 08:50 盘前情报前生效：
+
+```bash
+crontab -e
+# 添加一行（deploy.log 已在 .gitignore 中）：
+# 10 8 * * * cd ~/stock-monitor && bash scripts/auto_update.sh >> deploy.log 2>&1
+```
+
+自动部署记录统一写在 `~/stock-monitor/deploy.log`，日志出现 ❌ 时登录服务器按提示人工处理。本地 push 完想立即生效等不及次日 08:10 的话，手动跑一次 `git pull && REPLACE=1 bash deploy.sh` 即可。
+
 ## 添加新股票
 
 以添加 600019 宝钢股份为例：
