@@ -60,5 +60,13 @@
     "prompt_file": "tasks/000582/evening_alert.md",
     "deliver": "weixin",
     "continuity": true
+  },
+  {
+    "name": "部署健康检查",
+    "cron": "45 8 * * *",
+    "prompt_file": "tasks/_system/deploy_health_check.md",
+    "deliver": "weixin",
+    "disclaimer": false,
+    "_comment": "监控系统自监控：检查 deploy.log 当日有无 ❌ 记录、hermes 任务数是否为 10，异常推送 ⚠️，正常 [SILENT]。每天运行（含周末），因为自动部署可能发生在任何一天。"
   }
 ]

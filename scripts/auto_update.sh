@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 服务器端自动更新：git 有新提交时才重新部署
 # 供 crontab 调用（建议每天 05:10 凌晨检查，离 08:50 首个任务有 3 小时以上缓冲）：
-#   10 5 * * * cd ~/stock-monitor && bash -l scripts/auto_update.sh
+#   10 5 * * * cd ~/stock-monitor && bash -l scripts/auto_update.sh >> deploy.log 2>&1
 #（bash -l 不可省：crontab 默认 PATH 不含 hermes 所在的用户级目录，login shell 才能加载）
 # 设计要点：无新提交时直接跳过，不做无谓的 REPLACE 重建，
 # 避免天天删建任务打断 --continuity（盘前情报/收盘复盘的上次输出注入）历史。

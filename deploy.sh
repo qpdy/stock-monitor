@@ -116,24 +116,35 @@ for i, task in enumerate(tasks, 1):
         done.append(name)
         continue
 
-    # REPLACE 模式：先删同名旧任务及 replaces 声明的历史任务名；删除失败不阻断（旧任务可能本来就不存在）
+    # REPLACE 模式：先删同名旧任务及 replaces 声明的历史任务名。
+    # remove 结果分三类：成功 → 继续创建；非零且无错误输出 → 实测为“任务不存在”，继续创建；
+    # 非零但有错误输出或超时 → 视为真失败（网络/服务异常），跳过该任务创建并计入 failed，
+    # 否则旧任务残留 + 新任务创建成功会导致同名任务共存、重复推送，破坏 REPLACE 可重入承诺。
     if replace:
         old_names = [name] + task.get("replaces", [])
+        remove_failed = False
         for old in old_names:
             del_cmd = ["hermes", "cron", "remove", old]
             try:
                 r = subprocess.run(del_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
             except subprocess.TimeoutExpired:
-                print(f"    ⚠️ 删除旧任务 {old} 超时（>300s），跳过继续（不阻断创建）")
-                continue
+                print(f"    ✗ 删除旧任务 {old} 超时（>300s），疑似网络/服务挂起")
+                remove_failed = True
+                break
             if r.returncode == 0:
                 print(f"    ↻ 已删除旧任务: {old}")
             else:
                 err = (r.stderr.strip() or r.stdout.strip() or "")
                 if err:
-                    print(f"    ⚠️ 删除旧任务 {old} 失败（若为任务不存在可忽略）: {err}")
+                    print(f"    ✗ 删除旧任务 {old} 失败: {err}")
+                    remove_failed = True
+                    break
                 else:
                     print(f"    ↻ 无同名旧任务 {old}，直接创建")
+        if remove_failed:
+            print(f"    ✗ 跳过创建 {name}：旧任务删除未成功，避免同名任务共存导致重复推送")
+            failed.append(name)
+            continue
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
