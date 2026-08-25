@@ -31,9 +31,7 @@
     "name": "北部湾港-盘中监控",
     "cron": "5 10,11,13,14 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/intraday_monitor.md",
-    "deliver": "weixin",
-    "_comment": "replaces 用于清理改名前的旧任务。待服务器确认已跑过 REPLACE=1 部署（hermes cron list 无「北部湾港-盘中监控-整点」残留）后，可删除 replaces 字段消除每次部署的冗余 remove。",
-    "replaces": ["北部湾港-盘中监控-整点"]
+    "deliver": "weixin"
   },
   {
     "name": "北部湾港-午间舆情",
