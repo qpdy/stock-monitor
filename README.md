@@ -49,6 +49,10 @@ stock-monitor/
 本地开发机无需安装 hermes（用 DRY_RUN 校验即可），正式部署在服务器上执行：
 
 ```bash
+# 0. 确认服务器时区为北京时间（cron 按服务器本地时间执行，UTC 时区会导致全天任务错位）
+ssh user@server 'date && timedatectl 2>/dev/null | grep Timezone'
+#    若非 Asia/Shanghai：sudo timedatectl set-timezone Asia/Shanghai
+
 # 1. 上传项目（排除 macOS 系统文件）
 rsync -a --exclude '.DS_Store' stock-monitor/ user@server:~/stock-monitor/
 
@@ -57,6 +61,11 @@ ssh user@server 'cd ~/stock-monitor && bash deploy.sh && hermes cron list'
 ```
 
 日后本地改完 prompt，重复上面两步即可（第二步改用 `REPLACE=1 bash deploy.sh` 直接更新，不产生重复任务）。
+
+> **上线第一天必做**：先跑 `hermes cron delete --help` 确认删除任务的参数形式。
+> 若需要 `--name`，**立即把结论固化**：把 `deploy.sh` 和 `undeploy.sh` 里的
+> `DELETE_ARGS="${HERMES_DELETE_ARGS:-}"` 默认值改为 `"--name"`。
+> 不固化的话，`REPLACE=1` 部署时忘带 `HERMES_DELETE_ARGS=--name` 会静默产生全套重复任务。
 
 ## 部署步骤
 
@@ -94,6 +103,7 @@ REPLACE=1 bash deploy.sh   # 自动删除同名旧任务后重新创建，无重
 ```
 
 > hermes 的 cron create 是"新建"语义，直接重复执行 `bash deploy.sh` 可能产生重复任务；更新场景务必用 `REPLACE=1`，或先 `bash undeploy.sh` 清理。
+> `REPLACE=1` 可安全重入：某次更新中途失败（部分任务被删后来不及建），直接重跑 `REPLACE=1 bash deploy.sh` 即可补齐，不会重复。
 
 如需调整时间/任务名/推送渠道，改 `config/schedule.json` 对应字段后同样用 `REPLACE=1 bash deploy.sh` 更新。
 
