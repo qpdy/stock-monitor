@@ -14,9 +14,14 @@ stock-monitor/
 ├── scripts/
 │   ├── auto_update.sh               # 服务器 crontab 自动更新：有新提交才重新部署
 │   └── validate.sh                  # 配置一致性校验：README 任务表格 vs schedule.json（deploy.sh 部署前自动执行）
+├── .github/
+│   └── workflows/
+│       └── validate.yml             # CI：push/PR 时自动跑 validate.sh + deploy/undeploy 干跑
 ├── tasks/                           # prompt 纯文本，按股票代码分目录
 │   ├── _common/
 │   │   └── disclaimer.md            # 公共免责声明，部署时自动追加（任务可配 "disclaimer": false 跳过）
+│   ├── _system/
+│   │   └── deploy_health_check.md   # 部署健康检查（监控系统自监控）   08:45
 │   └── 000582/                      # 北部湾港
 │       ├── pre_market.md            # 盘前情报      08:50
 │       ├── auction_init.md          # 竞价初始      09:16
@@ -43,7 +48,7 @@ stock-monitor/
 | 北部湾港-盘中监控-尾盘 | `50 14 * * 1,2,3,4,5` | 尾盘异动监控，与整点共用同一 prompt | — |
 | 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 自身上次输出（--continuity） |
 | 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空/利好公告扫描，均无则 [SILENT] | 自身上次输出（--continuity，链式去重防长假重复推送） |
-| 部署健康检查 | `45 8 * * *` | 检查 deploy.log 当日 ❌ 记录与任务数（应为 10），异常推送 ⚠️，正常 [SILENT] | — |
+| 部署健康检查 | `45 8 * * *` | 检查 deploy.log 当日 ❌ 记录、实际任务与 schedule.json 任务名逐名比对、auto_update 是否运行，异常推送 ⚠️，正常 [SILENT] | — |
 
 行情数据统一来自腾讯财经接口 `https://qt.gtimg.cn/q=sz000582`（`~` 分隔，fields[3]=现价、fields[4]=昨收、fields[32]=涨跌幅、fields[30]=快照时间戳（交易日判断依据）等）。
 
@@ -98,7 +103,7 @@ hermes cron list    # 确认任务已删除
 
 ## 修改 prompt 的流程
 
-1. 直接编辑 `tasks/<股票代码>/` 下对应 `.md` 文件（纯文本，无需关心 shell 转义）；公共免责声明统一改 `tasks/_common/disclaimer.md`，部署时自动追加到每个 prompt 末尾（纯数据快照类任务如竞价/开盘首笔，在配置中加 `"disclaimer": false` 可跳过，提高信噪比）；
+1. 直接编辑 `tasks/<股票代码>/` 下对应 `.md` 文件（纯文本，无需关心 shell 转义）；公共免责声明统一改 `tasks/_common/disclaimer.md`，部署时自动追加到每个 prompt 末尾（纯数据快照类任务如竞价/开盘首笔，在配置中加 `"disclaimer": false` 可跳过，提高信噪比）。注意：改 `disclaimer.md` 等于动了所有任务的 prompt，下次部署会全量重建、打断所有 `--continuity` 历史，非必要不改；
 2. 本地提交并推送：`git add -A && git commit -m "说明改动" && git push origin main`
 3. 服务器上拉取并更新部署：
 
@@ -156,6 +161,6 @@ DRY_RUN=1 bash undeploy.sh
 - 盘中监控刻意安排在每小时过 5 分而非整点触发：13:00 整恰逢午休结束，接口快照仍是上午收盘数据；整点也是行情接口的访问高峰。
 - **交易日判断**：除晚间风险预警外的 8 个任务均内置非交易日防护——接口时间戳（fields[30]）非当日即回复 `[SILENT]`，**节假日/休市日收不到推送是设计行为**，不是故障。
 - **[SILENT] 静默机制**：hermes 仅当任务全部输出恰好为 `[SILENT]` 一个词时才不推送。因此所有静默指令均要求"全部输出仅 [SILENT] 一个词"，免责声明也注明 [SILENT] 时不附加——输出中混入任何其他文字（分析过程、免责声明）都会导致整条被推送。
-- 除配置 `"disclaimer": false` 的纯数据快照任务（竞价初始/竞价结果/开盘首笔）外，所有推送末尾均带固定免责声明，信息仅供参考，不构成投资建议。
+- 除配置 `"disclaimer": false` 的任务（竞价初始/竞价结果/开盘首笔/部署健康检查为纯数据快照，晚间风险预警为保持链式去重上下文干净而将声明内联在自身 prompt 中）外，所有推送末尾均带固定免责声明，信息仅供参考，不构成投资建议。
 - **接口故障与休市可区分**：所有行情类任务均已内置"接口请求失败/返回为空/无法解析 → 输出 ⚠️ 数据源异常，严禁 [SILENT]"分支——若该推送的日子收不到任何消息且确认是交易日，说明数据源（腾讯接口）故障，需人工介入，而非监控静默失效。
 - **prompt 含时效性事实**：`pre_market.md`/`closing_review.md` 中平陆运河"2026年9月17—21日试通航、年底商业化运营"等表述已改为自纠偏写法（按当前日期判断阶段、以最新搜索为准），但重大节点过后仍建议人工复核一次 prompt 是否需要更新。

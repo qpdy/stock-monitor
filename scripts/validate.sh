@@ -46,10 +46,16 @@ config_rows = {t["name"]: t["cron"] for t in tasks}
 
 errors = []
 
+# 0. 空表防护：README 表格解析失败（表头改名/表格被删）时 in_table 恒为 False，
+#    readme_rows 为空，绝不能走下去——否则全部任务会被误报成"README 表格缺失"
+if not readme_rows:
+    errors.append("README 中未解析到任务表格（表头必须为 '| 任务名 | ...' 且 cron 列带反引号），请检查 README.md 表格格式")
+
 # 1. 配置里有但 README 表格没有的任务
-for name in config_rows:
-    if name not in readme_rows:
-        errors.append(f"配置存在但 README 表格缺失: {name} (cron={config_rows[name]})")
+else:
+    for name in config_rows:
+        if name not in readme_rows:
+            errors.append(f"配置存在但 README 表格缺失: {name} (cron={config_rows[name]})")
 
 # 2. README 表格有但配置里没有的任务
 for name in readme_rows:
