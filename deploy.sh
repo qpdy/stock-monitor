@@ -47,6 +47,14 @@ if os.path.isfile(disclaimer_path):
 print(f"📋 从 schedule.json 读取到 {len(tasks)} 个任务"
       + ("，REPLACE 更新模式" if replace else "") + "\n")
 
+# 重名检测：REPLACE 模式下同名任务会互相覆盖（后者删掉前者刚建的），必须前置拦截
+names = [t["name"] for t in tasks]
+dup = sorted({n for n in names if names.count(n) > 1})
+if dup:
+    print(f"❌ schedule.json 存在重名任务：{'、'.join(dup)}")
+    print("   同名任务在 REPLACE 模式下会互相覆盖，请修正配置后重试")
+    sys.exit(1)
+
 failed, done = [], []
 for i, task in enumerate(tasks, 1):
     name = task["name"]
