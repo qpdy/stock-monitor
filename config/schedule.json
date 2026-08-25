@@ -1,0 +1,58 @@
+[
+  {
+    "name": "北部湾港-盘前情报",
+    "cron": "50 8 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/pre_market.md",
+    "deliver": "weixin",
+    "context_from": "北部湾港-收盘复盘"
+  },
+  {
+    "name": "北部湾港-竞价初始",
+    "cron": "15 9 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/auction_init.md",
+    "deliver": "weixin"
+  },
+  {
+    "name": "北部湾港-竞价结果",
+    "cron": "25 9 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/auction_result.md",
+    "deliver": "weixin"
+  },
+  {
+    "name": "北部湾港-开盘首笔",
+    "cron": "30 9 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/opening_trade.md",
+    "deliver": "weixin"
+  },
+  {
+    "name": "北部湾港-盘中监控-整点",
+    "cron": "0 10,11,13,14 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/intraday_monitor.md",
+    "deliver": "weixin"
+  },
+  {
+    "name": "北部湾港-午间舆情",
+    "cron": "40 12 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/noon_sentiment.md",
+    "deliver": "weixin"
+  },
+  {
+    "name": "北部湾港-盘中监控-尾盘",
+    "cron": "50 14 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/closing_monitor.md",
+    "deliver": "weixin"
+  },
+  {
+    "name": "北部湾港-收盘复盘",
+    "cron": "0 18 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/closing_review.md",
+    "deliver": "weixin",
+    "context_from": "北部湾港-盘前情报"
+  },
+  {
+    "name": "北部湾港-晚间风险预警",
+    "cron": "30 21 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/evening_alert.md",
+    "deliver": "weixin"
+  }
+]

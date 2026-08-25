@@ -1,0 +1,113 @@
+# stock-monitor — hermes 股票监控任务集
+
+基于 hermes CLI 的股票全交易日流程监控：盘前情报 → 集合竞价 → 开盘 → 盘中异动 → 午间舆情 → 尾盘监控 → 收盘复盘 → 晚间风险预警，推送至微信（weixin）。
+
+支持多只股票：每只股票一套 `tasks/<股票代码>/` prompt 目录 + 在 `schedule.json` 中登记该股票的任务。当前已配置 **000582 北部湾港**（9 个任务）。
+
+## 目录结构
+
+```
+stock-monitor/
+├── README.md                        # 本文件
+├── deploy.sh                        # 一键部署：读取配置，批量执行 hermes cron create
+├── undeploy.sh                      # 一键清理：批量执行 hermes cron delete
+├── tasks/                           # prompt 纯文本，按股票代码分目录
+│   ├── _common/
+│   │   └── disclaimer.md            # 公共免责声明，部署时自动追加到每个 prompt 末尾
+│   └── 000582/                      # 北部湾港
+│       ├── pre_market.md            # 盘前情报      08:50
+│       ├── auction_init.md          # 竞价初始      09:15
+│       ├── auction_result.md        # 竞价结果      09:25
+│       ├── opening_trade.md         # 开盘首笔      09:30
+│       ├── intraday_monitor.md      # 盘中监控-整点  10/11/13/14 点整
+│       ├── noon_sentiment.md        # 午间舆情      12:40
+│       ├── closing_monitor.md       # 盘中监控-尾盘  14:50
+│       ├── closing_review.md        # 收盘复盘      18:00
+│       └── evening_alert.md         # 晚间风险预警   21:30
+└── config/
+    └── schedule.json                # 所有任务的 cron / name / deliver / context_from 配置
+```
+
+## 已配置任务一览（000582 北部湾港）
+
+| 任务名 | cron | 说明 | context_from |
+|---|---|---|---|
+| 北部湾港-盘前情报 | `50 8 * * 1,2,3,4,5` | 搜索整理隔夜利好/利空，平陆运河进展优先 | 收盘复盘 |
+| 北部湾港-竞价初始 | `15 9 * * 1,2,3,4,5` | 集合竞价初始虚拟价格 | — |
+| 北部湾港-竞价结果 | `25 9 * * 1,2,3,4,5` | 竞价最终开盘价与量 | — |
+| 北部湾港-开盘首笔 | `30 9 * * 1,2,3,4,5` | 连续竞价首笔成交 | — |
+| 北部湾港-盘中监控-整点 | `0 10,11,13,14 * * 1,2,3,4,5` | 涨跌幅超 ±5% 才推送，否则 [SILENT] | — |
+| 北部湾港-午间舆情 | `40 12 * * 1,2,3,4,5` | 午间利空公告扫描，无则 [SILENT] | — |
+| 北部湾港-盘中监控-尾盘 | `50 14 * * 1,2,3,4,5` | 尾盘异动监控，逻辑同整点 | — |
+| 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 盘前情报 |
+| 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空公告扫描，无则 [SILENT] | — |
+
+行情数据统一来自腾讯财经接口 `https://qt.gtimg.cn/q=sz000582`（`~` 分隔，fields[3]=现价、fields[4]=昨收、fields[32]=涨跌幅 等）。
+
+## 部署步骤
+
+```bash
+bash deploy.sh              # 全新部署
+REPLACE=1 bash deploy.sh    # 更新部署：自动删除同名旧任务后重建，可安全重复执行
+```
+
+脚本会：
+1. 检查 `hermes`、`python3` 依赖；
+2. 逐个读取 `config/schedule.json` 中的任务配置；
+3. 把 `tasks/` 下对应 `.md` 文件全文作为 `--prompt`，连同 `--name`、`--deliver`、`--context_from` 执行 `hermes cron create`；
+4. 结束时汇总成功/失败任务数，任一失败以非零码退出。
+
+部署后复核：
+
+```bash
+hermes cron list    # 应能看到全部任务
+```
+
+## 清理步骤
+
+```bash
+bash undeploy.sh
+hermes cron list    # 确认任务已删除
+```
+
+## 修改 prompt 的流程
+
+1. 直接编辑 `tasks/<股票代码>/` 下对应 `.md` 文件（纯文本，无需关心 shell 转义）；公共免责声明统一改 `tasks/_common/disclaimer.md`，部署时自动追加到每个 prompt 末尾；
+2. 一键更新生效：
+
+```bash
+REPLACE=1 bash deploy.sh   # 自动删除同名旧任务后重新创建，无重复风险
+```
+
+> hermes 的 cron create 是"新建"语义，直接重复执行 `bash deploy.sh` 可能产生重复任务；更新场景务必用 `REPLACE=1`，或先 `bash undeploy.sh` 清理。
+
+如需调整时间/任务名/推送渠道，改 `config/schedule.json` 对应字段后同样用 `REPLACE=1 bash deploy.sh` 更新。
+
+## 添加新股票
+
+以添加 600019 宝钢股份为例：
+
+1. **建 prompt 目录**：新建 `tasks/600019/`，参照 `tasks/000582/` 写 9 个 `.md`（把股票代码、名称、腾讯接口代码改成 `sh600019`，重点关注题材按该股票调整；免责声明不用写，部署时自动追加）；
+2. **登记任务**：往 `config/schedule.json` 数组追加该股票的任务，任务名带股票名前缀避免冲突，如 `"宝钢股份-盘前情报"`，`prompt_file` 指向 `tasks/600019/xxx.md`；
+3. **部署**：
+
+```bash
+REPLACE=1 bash deploy.sh   # 全量更新：旧任务删了重建，新任务直接创建
+```
+
+> 注意：`deploy.sh` 部署的是 `schedule.json` 里的**全部**任务。如果想只加新股票不重动旧任务，可手动单独执行新任务的 `hermes cron create` 命令。
+
+## 附：干跑模式（不实际调用 hermes）
+
+```bash
+DRY_RUN=1 bash deploy.sh     # 只打印将执行的命令
+DRY_RUN=1 bash undeploy.sh
+```
+
+用于在未安装 hermes 的机器上校验配置与 prompt 文件是否齐全。
+
+## 注意事项
+
+- `undeploy.sh` 默认按 `hermes cron delete <任务名>` 传参；若你的 hermes 版本要求 `--name`，执行 `HERMES_DELETE_ARGS=--name bash undeploy.sh` 即可。
+- 盘中监控/午间舆情/晚间风险预警为静默型任务：无异常时回复 `[SILENT]` 不推送，收不到消息属正常现象。
+- 所有推送末尾均带固定免责声明，信息仅供参考，不构成投资建议。
