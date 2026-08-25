@@ -87,7 +87,8 @@ for i, task in enumerate(tasks, 1):
         if task.get("context_from"):
             extra += f" --context_from \"{task['context_from']}\""
         if replace:
-            print(f"    将先执行: hermes cron delete {name}")
+            del_preview = " ".join(["hermes", "cron", "delete"] + ([delete_args] if delete_args else []) + [name])
+            print(f"    将先执行: {del_preview}")
         print(f"    将执行: hermes cron create \"{task['cron']}\" --prompt <{len(prompt)}字"
               + ("（含公共声明）" if disclaimer else "") + f"> --name \"{name}\"" + extra)
         done.append(name)

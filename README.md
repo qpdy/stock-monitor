@@ -42,7 +42,21 @@ stock-monitor/
 | 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 盘前情报 |
 | 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空公告扫描，无则 [SILENT] | — |
 
-行情数据统一来自腾讯财经接口 `https://qt.gtimg.cn/q=sz000582`（`~` 分隔，fields[3]=现价、fields[4]=昨收、fields[32]=涨跌幅 等）。
+行情数据统一来自腾讯财经接口 `https://qt.gtimg.cn/q=sz000582`（`~` 分隔，fields[3]=现价、fields[4]=昨收、fields[32]=涨跌幅、fields[30]=快照时间戳（交易日判断依据）等）。
+
+## 部署到服务器
+
+本地开发机无需安装 hermes（用 DRY_RUN 校验即可），正式部署在服务器上执行：
+
+```bash
+# 1. 上传项目（排除 macOS 系统文件）
+rsync -a --exclude '.DS_Store' stock-monitor/ user@server:~/stock-monitor/
+
+# 2. 服务器上部署（需已安装并登录 hermes）
+ssh user@server 'cd ~/stock-monitor && bash deploy.sh && hermes cron list'
+```
+
+日后本地改完 prompt，重复上面两步即可（第二步改用 `REPLACE=1 bash deploy.sh` 直接更新，不产生重复任务）。
 
 ## 部署步骤
 
@@ -110,4 +124,5 @@ DRY_RUN=1 bash undeploy.sh
 
 - `undeploy.sh` 默认按 `hermes cron delete <任务名>` 传参；若你的 hermes 版本要求 `--name`，执行 `HERMES_DELETE_ARGS=--name bash undeploy.sh` 即可。
 - 盘中监控/午间舆情/晚间风险预警为静默型任务：无异常时回复 `[SILENT]` 不推送，收不到消息属正常现象。
+- **交易日判断**：除晚间风险预警外的 8 个任务均内置非交易日防护——接口时间戳（fields[30]）非当日即回复"跳过"，**节假日/休市日收不到推送是设计行为**，不是故障。
 - 所有推送末尾均带固定免责声明，信息仅供参考，不构成投资建议。
