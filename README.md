@@ -115,7 +115,7 @@ cd ~/stock-monitor && git pull && REPLACE=1 bash deploy.sh   # 自动删除同�
 
 ### 自动更新（可选）
 
-服务器上配一次 crontab，之后每天 05:10（凌晨）自动检查 GitHub 是否有新提交，**有才执行** `git pull + REPLACE=1 bash deploy.sh`（无新提交时跳过，不会天天删建任务、打断 `--continuity` 历史）。选凌晨是为了离 08:50 首个任务留足 3 小时以上缓冲——即使部署失败，也有充足时间人工介入，当天任务最坏情况跑旧 prompt、无实际损害：
+服务器上配一次 crontab，之后每天 05:10（凌晨）自动检查 GitHub 是否有新提交，**有才执行** `git pull + REPLACE=1 bash deploy.sh`（无新提交时跳过，不会天天删建任务、打断 `--continuity` 历史）。提交未触及 `tasks/ config/ deploy.sh undeploy.sh` 时（如纯 README 改动），只同步代码不重建任务，进一步避免打断 continuity。选凌晨是为了离 08:50 首个任务留足 3 小时以上缓冲——即使部署失败，也有充足时间人工介入，当天任务最坏情况跑旧 prompt、无实际损害；且「部署健康检查」任务会在 08:45 主动推送部署失败告警：
 
 ```bash
 crontab -e

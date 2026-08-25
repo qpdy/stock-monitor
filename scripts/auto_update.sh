@@ -26,6 +26,18 @@ if [ "$LOCAL" = "$REMOTE" ]; then
   exit 0
 fi
 
+# 变更影响面检测：只有任务 prompt、配置、部署脚本变化才需要重建任务；
+# 纯文档/脚本变更（README、validate.sh 等）重建会白白打断 --continuity 历史。
+if git diff --quiet "$LOCAL" "$REMOTE" -- tasks/ config/ deploy.sh undeploy.sh; then
+  log "检测到新提交 $LOCAL -> $REMOTE，但仅文档/校验脚本变更，跳过重建"
+  if git pull --ff-only origin main >> "$LOG" 2>&1; then
+    log "✅ 已同步代码（未重建任务）"
+  else
+    log "❌ git pull 失败（本地可能有分叉提交，或工作区有未提交修改），请人工处理：cd ~/stock-monitor && git status"
+  fi
+  exit 0
+fi
+
 log "检测到新提交 $LOCAL -> $REMOTE，开始更新部署"
 if git pull --ff-only origin main >> "$LOG" 2>&1; then
   if REPLACE=1 bash deploy.sh >> "$LOG" 2>&1; then

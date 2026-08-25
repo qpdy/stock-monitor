@@ -1,0 +1,24 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 一致性校验（README 表格 vs schedule.json）
+        run: bash scripts/validate.sh
+
+      - name: 部署干跑（全新创建）
+        run: DRY_RUN=1 bash deploy.sh
+
+      - name: 部署干跑（REPLACE 更新模式）
+        run: DRY_RUN=1 REPLACE=1 bash deploy.sh
+
+      - name: 清理干跑
+        run: DRY_RUN=1 bash undeploy.sh
