@@ -48,7 +48,12 @@ for i, name in enumerate(all_names, 1):
         done.append(name)
         continue
 
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+    except subprocess.TimeoutExpired:
+        print(f"    ✗ 删除失败: hermes 调用超时（>300s），疑似网络/服务挂起")
+        failed.append(name)
+        continue
     if result.returncode == 0:
         print(f"    ✓ 删除成功")
         done.append(name)

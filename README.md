@@ -11,9 +11,12 @@ stock-monitor/
 ├── README.md                        # 本文件
 ├── deploy.sh                        # 一键部署：读取配置，批量执行 hermes cron create
 ├── undeploy.sh                      # 一键清理：批量执行 hermes cron delete
+├── scripts/
+│   ├── auto_update.sh               # 服务器 crontab 自动更新：有新提交才重新部署
+│   └── validate.sh                  # 配置一致性校验：README 任务表格 vs schedule.json（deploy.sh 部署前自动执行）
 ├── tasks/                           # prompt 纯文本，按股票代码分目录
 │   ├── _common/
-│   │   └── disclaimer.md            # 公共免责声明，部署时自动追加到每个 prompt 末尾
+│   │   └── disclaimer.md            # 公共免责声明，部署时自动追加（任务可配 "disclaimer": false 跳过）
 │   └── 000582/                      # 北部湾港
 │       ├── pre_market.md            # 盘前情报      08:50
 │       ├── auction_init.md          # 竞价初始      09:16
@@ -39,7 +42,7 @@ stock-monitor/
 | 北部湾港-午间舆情 | `40 12 * * 1,2,3,4,5` | 午间利空/利好公告扫描，均无则 [SILENT] | — |
 | 北部湾港-盘中监控-尾盘 | `50 14 * * 1,2,3,4,5` | 尾盘异动监控，与整点共用同一 prompt | — |
 | 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 自身上次输出（--continuity） |
-| 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空/利好公告扫描，均无则 [SILENT] | — |
+| 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空/利好公告扫描，均无则 [SILENT] | 自身上次输出（--continuity，链式去重防长假重复推送） |
 
 行情数据统一来自腾讯财经接口 `https://qt.gtimg.cn/q=sz000582`（`~` 分隔，fields[3]=现价、fields[4]=昨收、fields[32]=涨跌幅、fields[30]=快照时间戳（交易日判断依据）等）。
 
@@ -49,7 +52,8 @@ stock-monitor/
 代码通过 GitHub 同步（仓库已设公开，HTTPS 匿名可读，服务器无需配置任何凭证）：
 
 ```bash
-# 0. 确认服务器时区为北京时间（cron 按服务器本地时间执行，UTC 时区会导致全天任务错位）
+# 0. 确认服务器时区为北京时间（cron 按服务器本地时间执行，UTC 时区会导致全天任务错位；
+#    deploy.sh 已内置时区防护：检测到非 +0800 时区会打警告提示，但不阻断部署）
 #    服务器上执行 date 查看，若非 CST/Asia/Shanghai：sudo timedatectl set-timezone Asia/Shanghai
 
 # 1. 服务器上 clone（需已安装并登录 hermes）
@@ -93,7 +97,7 @@ hermes cron list    # 确认任务已删除
 
 ## 修改 prompt 的流程
 
-1. 直接编辑 `tasks/<股票代码>/` 下对应 `.md` 文件（纯文本，无需关心 shell 转义）；公共免责声明统一改 `tasks/_common/disclaimer.md`，部署时自动追加到每个 prompt 末尾；
+1. 直接编辑 `tasks/<股票代码>/` 下对应 `.md` 文件（纯文本，无需关心 shell 转义）；公共免责声明统一改 `tasks/_common/disclaimer.md`，部署时自动追加到每个 prompt 末尾（纯数据快照类任务如竞价/开盘首笔，在配置中加 `"disclaimer": false` 可跳过，提高信噪比）；
 2. 本地提交并推送：`git add -A && git commit -m "说明改动" && git push origin main`
 3. 服务器上拉取并更新部署：
 
@@ -104,21 +108,22 @@ cd ~/stock-monitor && git pull && REPLACE=1 bash deploy.sh   # 自动删除同�
 > hermes 的 cron create 是"新建"语义，直接重复执行 `bash deploy.sh` 可能产生重复任务；更新场景务必用 `REPLACE=1`，或先 `bash undeploy.sh` 清理。
 > `REPLACE=1` 可安全重入：某次更新中途失败（部分任务被删后来不及建），直接重跑 `REPLACE=1 bash deploy.sh` 即可补齐，不会重复。
 
-如需调整时间/任务名/推送渠道，改 `config/schedule.json` 对应字段后同样用 `REPLACE=1 bash deploy.sh` 更新。改 cron 时间后记得同步更新上方「已配置任务一览」表格，避免文档与配置漂移。
+如需调整时间/任务名/推送渠道，改 `config/schedule.json` 对应字段后同样用 `REPLACE=1 bash deploy.sh` 更新。改 cron 时间后记得同步更新上方「已配置任务一览」表格，避免文档与配置漂移——`deploy.sh` 会在部署前自动执行 `scripts/validate.sh` 校验两者一致性，发现漂移会中断部署并标出差异。
 
 **任务改名**：若给任务改了名字（如 `北部湾港-盘中监控-整点` → `北部湾港-盘中监控`），在该任务配置中加 `"replaces": ["旧任务名"]`，部署和清理脚本会自动连带删除旧名任务，避免遗留重复任务。
 
 ### 自动更新（可选）
 
-服务器上配一次 crontab，之后每天 08:10 自动检查 GitHub 是否有新提交，**有才执行** `git pull + REPLACE=1 bash deploy.sh`（无新提交时跳过，不会天天删建任务、打断 `--continuity` 历史），赶在 08:50 盘前情报前生效：
+服务器上配一次 crontab，之后每天 05:10（凌晨）自动检查 GitHub 是否有新提交，**有才执行** `git pull + REPLACE=1 bash deploy.sh`（无新提交时跳过，不会天天删建任务、打断 `--continuity` 历史）。选凌晨是为了离 08:50 首个任务留足 3 小时以上缓冲——即使部署失败，也有充足时间人工介入，当天任务最坏情况跑旧 prompt、无实际损害：
 
 ```bash
 crontab -e
 # 添加一行（deploy.log 已在 .gitignore 中）：
-# 10 8 * * * cd ~/stock-monitor && bash scripts/auto_update.sh >> deploy.log 2>&1
+# 10 5 * * * cd ~/stock-monitor && bash -l scripts/auto_update.sh >> deploy.log 2>&1
+#（bash -l 不可省：crontab 默认 PATH 不含 hermes 所在的用户级目录，login shell 才能加载）
 ```
 
-自动部署记录统一写在 `~/stock-monitor/deploy.log`，日志出现 ❌ 时登录服务器按提示人工处理。本地 push 完想立即生效等不及次日 08:10 的话，手动跑一次 `git pull && REPLACE=1 bash deploy.sh` 即可。
+自动部署记录统一写在 `~/stock-monitor/deploy.log`，日志出现 ❌ 时登录服务器按提示人工处理。本地 push 完想立即生效等不及次日 05:10 的话，手动跑一次 `git pull && REPLACE=1 bash deploy.sh` 即可。
 
 ## 添加新股票
 
@@ -150,4 +155,6 @@ DRY_RUN=1 bash undeploy.sh
 - 盘中监控刻意安排在每小时过 5 分而非整点触发：13:00 整恰逢午休结束，接口快照仍是上午收盘数据；整点也是行情接口的访问高峰。
 - **交易日判断**：除晚间风险预警外的 8 个任务均内置非交易日防护——接口时间戳（fields[30]）非当日即回复 `[SILENT]`，**节假日/休市日收不到推送是设计行为**，不是故障。
 - **[SILENT] 静默机制**：hermes 仅当任务全部输出恰好为 `[SILENT]` 一个词时才不推送。因此所有静默指令均要求"全部输出仅 [SILENT] 一个词"，免责声明也注明 [SILENT] 时不附加——输出中混入任何其他文字（分析过程、免责声明）都会导致整条被推送。
-- 所有推送末尾均带固定免责声明，信息仅供参考，不构成投资建议。
+- 除配置 `"disclaimer": false` 的纯数据快照任务（竞价初始/竞价结果/开盘首笔）外，所有推送末尾均带固定免责声明，信息仅供参考，不构成投资建议。
+- **接口故障与休市可区分**：所有行情类任务均已内置"接口请求失败/返回为空/无法解析 → 输出 ⚠️ 数据源异常，严禁 [SILENT]"分支——若该推送的日子收不到任何消息且确认是交易日，说明数据源（腾讯接口）故障，需人工介入，而非监控静默失效。
+- **prompt 含时效性事实**：`pre_market.md`/`closing_review.md` 中平陆运河"2026年9月17—21日试通航、年底商业化运营"等表述已改为自纠偏写法（按当前日期判断阶段、以最新搜索为准），但重大节点过后仍建议人工复核一次 prompt 是否需要更新。

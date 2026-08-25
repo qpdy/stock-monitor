@@ -10,25 +10,29 @@
     "name": "北部湾港-竞价初始",
     "cron": "16 9 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/auction_init.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "disclaimer": false
   },
   {
     "name": "北部湾港-竞价结果",
     "cron": "25 9 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/auction_result.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "disclaimer": false
   },
   {
     "name": "北部湾港-开盘首笔",
     "cron": "30 9 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/opening_trade.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "disclaimer": false
   },
   {
     "name": "北部湾港-盘中监控",
     "cron": "5 10,11,13,14 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/intraday_monitor.md",
     "deliver": "weixin",
+    "_comment": "replaces 用于清理改名前的旧任务。待服务器确认已跑过 REPLACE=1 部署（hermes cron list 无「北部湾港-盘中监控-整点」残留）后，可删除 replaces 字段消除每次部署的冗余 remove。",
     "replaces": ["北部湾港-盘中监控-整点"]
   },
   {
@@ -54,6 +58,7 @@
     "name": "北部湾港-晚间风险预警",
     "cron": "30 21 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/evening_alert.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "continuity": true
   }
 ]

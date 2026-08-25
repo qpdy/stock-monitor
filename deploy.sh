@@ -4,6 +4,7 @@
 #       REPLACE=1 bash deploy.sh    更新模式：创建前自动删除同名旧任务
 #       DRY_RUN=1 bash deploy.sh    干跑模式，只打印将执行的命令，不实际调用 hermes
 # 说明: 若 tasks/_common/disclaimer.md 存在，会自动追加到每个 prompt 末尾
+#       （任务配置中 "disclaimer": false 可跳过追加，用于纯数据快照类任务）
 set -euo pipefail
 
 # 强制 Python IO 走 UTF-8：服务器 locale 常为 C/POSIX，否则中文 argv/输出会解码失败
@@ -18,6 +19,26 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
 fi
 command -v python3 >/dev/null 2>&1 || { echo "❌ 错误：未找到 python3，deploy 脚本依赖 python3 解析 JSON"; exit 1; }
 [[ -f "$CONFIG" ]] || { echo "❌ 错误：配置文件不存在 $CONFIG"; exit 1; }
+
+# ---------- 时区防护 ----------
+# cron 按服务器本地时间执行，时区错误会导致全天任务静默错位（最隐蔽的故障）。
+# 用 python3 而非 bash 内建判断：含多字节字符的 if/echo 块在部分 bash 版本 + set -u 下
+# 存在解析兼容问题（实测 TZ=UTC 时误报 unbound variable），整个检查+告警由 python 完成彻底绕开。
+# 放在依赖检查之后：无 python3 的机器应先报真正的依赖缺失，而非先误报时区警告。
+# 仅警告不阻断：DRY_RUN 本地校验、或确有非北京时区需求时不应被卡死。
+python3 - <<'PYEOF'
+import time
+offset = time.strftime("%z")
+if offset != "+0800":
+    print(f"⚠️ 警告：当前系统时区偏移为 {offset}（非 +0800 北京时间）")
+    print("   cron 按服务器本地时间触发，时区错误会导致全天任务执行时间错位")
+    print("   如确认服务器应为北京时间，请执行：sudo timedatectl set-timezone Asia/Shanghai")
+    print()
+PYEOF
+
+# ---------- 配置一致性校验 ----------
+# 部署前校验 README 任务表格与 schedule.json 是否漂移，避免文档与配置脱节被推到服务器
+bash "$SCRIPT_DIR/scripts/validate.sh"
 
 # 用 python3 解析 JSON 并调用 hermes：prompt 中含单引号/双引号/emoji，
 # 经 subprocess 列表传参可完全绕开 shell 转义问题
@@ -67,7 +88,9 @@ for i, task in enumerate(tasks, 1):
         print(f"[{i}/{len(tasks)}] ✗ {name}: prompt 文件为空 {task['prompt_file']}")
         failed.append(name)
         continue
-    if disclaimer:
+    # 默认追加公共免责声明；任务配置 "disclaimer": false 时跳过（纯数据快照任务信噪比考虑）
+    use_disclaimer = disclaimer and task.get("disclaimer", True)
+    if use_disclaimer:
         prompt = prompt + "\n\n" + disclaimer
 
     # hermes cron create 用法: schedule [prompt] —— cron 表达式和 prompt 均为位置参数
@@ -89,7 +112,7 @@ for i, task in enumerate(tasks, 1):
                 del_preview = " ".join(["hermes", "cron", "remove", old])
                 print(f"    将先执行: {del_preview}")
         print(f"    将执行: hermes cron create \"{task['cron']}\" \"<{len(prompt)}字"
-              + ("（含公共声明）" if disclaimer else "") + f" prompt>\" --name \"{name}\"" + extra)
+              + ("（含公共声明）" if use_disclaimer else "") + f" prompt>\" --name \"{name}\"" + extra)
         done.append(name)
         continue
 
@@ -98,7 +121,11 @@ for i, task in enumerate(tasks, 1):
         old_names = [name] + task.get("replaces", [])
         for old in old_names:
             del_cmd = ["hermes", "cron", "remove", old]
-            r = subprocess.run(del_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            try:
+                r = subprocess.run(del_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+            except subprocess.TimeoutExpired:
+                print(f"    ⚠️ 删除旧任务 {old} 超时（>300s），跳过继续（不阻断创建）")
+                continue
             if r.returncode == 0:
                 print(f"    ↻ 已删除旧任务: {old}")
             else:
@@ -108,7 +135,12 @@ for i, task in enumerate(tasks, 1):
                 else:
                     print(f"    ↻ 无同名旧任务 {old}，直接创建")
 
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+    except subprocess.TimeoutExpired:
+        print(f"    ✗ 创建失败: hermes 调用超时（>300s），疑似网络/服务挂起")
+        failed.append(name)
+        continue
     if result.returncode == 0:
         print(f"    ✓ 创建成功")
         done.append(name)
