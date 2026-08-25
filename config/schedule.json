@@ -40,7 +40,7 @@
   {
     "name": "北部湾港-盘中监控-尾盘",
     "cron": "50 14 * * 1,2,3,4,5",
-    "prompt_file": "tasks/000582/closing_monitor.md",
+    "prompt_file": "tasks/000582/intraday_monitor.md",
     "deliver": "weixin"
   },
   {

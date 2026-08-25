@@ -19,9 +19,8 @@ stock-monitor/
 │       ├── auction_init.md          # 竞价初始      09:16
 │       ├── auction_result.md        # 竞价结果      09:25
 │       ├── opening_trade.md         # 开盘首笔      09:30
-│       ├── intraday_monitor.md      # 盘中监控      10/11/13/14 点过5分
+│       ├── intraday_monitor.md      # 盘中监控（整点过5分 + 14:50 尾盘共用）
 │       ├── noon_sentiment.md        # 午间舆情      12:40
-│       ├── closing_monitor.md       # 盘中监控-尾盘  14:50
 │       ├── closing_review.md        # 收盘复盘      18:00
 │       └── evening_alert.md         # 晚间风险预警   21:30
 └── config/
@@ -38,7 +37,7 @@ stock-monitor/
 | 北部湾港-开盘首笔 | `30 9 * * 1,2,3,4,5` | 连续竞价首笔成交 | — |
 | 北部湾港-盘中监控 | `5 10,11,13,14 * * 1,2,3,4,5` | 涨跌幅超 ±5% 才推送，否则 [SILENT] | — |
 | 北部湾港-午间舆情 | `40 12 * * 1,2,3,4,5` | 午间利空公告扫描，无则 [SILENT] | — |
-| 北部湾港-盘中监控-尾盘 | `50 14 * * 1,2,3,4,5` | 尾盘异动监控，逻辑同整点 | — |
+| 北部湾港-盘中监控-尾盘 | `50 14 * * 1,2,3,4,5` | 尾盘异动监控，与整点共用同一 prompt | — |
 | 北部湾港-收盘复盘 | `0 18 * * 1,2,3,4,5` | 收盘数据 + 涨跌归因 + 明日展望 | 自身上次输出（--continuity） |
 | 北部湾港-晚间风险预警 | `30 21 * * 1,2,3,4,5` | 晚间利空公告扫描，无则 [SILENT] | — |
 
@@ -105,7 +104,7 @@ cd ~/stock-monitor && git pull && REPLACE=1 bash deploy.sh   # 自动删除同�
 > hermes 的 cron create 是"新建"语义，直接重复执行 `bash deploy.sh` 可能产生重复任务；更新场景务必用 `REPLACE=1`，或先 `bash undeploy.sh` 清理。
 > `REPLACE=1` 可安全重入：某次更新中途失败（部分任务被删后来不及建），直接重跑 `REPLACE=1 bash deploy.sh` 即可补齐，不会重复。
 
-如需调整时间/任务名/推送渠道，改 `config/schedule.json` 对应字段后同样用 `REPLACE=1 bash deploy.sh` 更新。
+如需调整时间/任务名/推送渠道，改 `config/schedule.json` 对应字段后同样用 `REPLACE=1 bash deploy.sh` 更新。改 cron 时间后记得同步更新上方「已配置任务一览」表格，避免文档与配置漂移。
 
 **任务改名**：若给任务改了名字（如 `北部湾港-盘中监控-整点` → `北部湾港-盘中监控`），在该任务配置中加 `"replaces": ["旧任务名"]`，部署和清理脚本会自动连带删除旧名任务，避免遗留重复任务。
 
