@@ -1,14 +1,34 @@
 #!/usr/bin/env bash
 # stock-monitor 股票监控任务一键部署脚本
-# 用法: bash deploy.sh              正式部署（全新创建）
-#       REPLACE=1 bash deploy.sh    更新模式：创建前自动删除同名旧任务
-#       DRY_RUN=1 bash deploy.sh    干跑模式，只打印将执行的命令，不实际调用 hermes
+# 用法: bash deploy.sh                       正式部署（全新创建）
+#       REPLACE=1 bash deploy.sh             更新模式：创建前自动删除同名旧任务
+#       DRY_RUN=1 bash deploy.sh             干跑模式，只打印将执行的命令，不实际调用 hermes
+#       bash deploy.sh --only <任务名前缀>   选择性部署：只处理任务名以该前缀开头的任务
+#                                           （新增股票时不重动旧任务，保护其 --continuity 历史）
 # 说明: 若 tasks/_common/disclaimer.md 存在，会自动追加到每个 prompt 末尾
 #       （任务配置中 "disclaimer": false 可跳过追加，用于纯数据快照类任务）
+#       任务配置 "event_calendar": true 时，prompt 同目录的 event_calendar.md
+#       会注入到该任务 prompt 末尾（免责声明之前），事件节点单点维护、按任务 opt-in
 set -euo pipefail
 
 # 强制 Python IO 走 UTF-8：服务器 locale 常为 C/POSIX，否则中文 argv/输出会解码失败
 export PYTHONUTF8=1
+
+# ---------- 参数解析 ----------
+ONLY_PREFIX=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only)
+      [[ $# -ge 2 && "$2" != -* ]] || { echo "❌ 错误：--only 需要一个任务名前缀参数，如 bash deploy.sh --only 宝钢股份"; exit 1; }
+      ONLY_PREFIX="$2"
+      shift 2
+      ;;
+    *)
+      echo "❌ 错误：未知参数 $1（仅支持 --only <任务名前缀>）"
+      exit 1
+      ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/config/schedule.json"
@@ -16,6 +36,9 @@ CONFIG="$SCRIPT_DIR/config/schedule.json"
 # ---------- 依赖检查 ----------
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
   command -v hermes >/dev/null 2>&1 || { echo "❌ 错误：未找到 hermes 命令，请先安装/登录 hermes CLI"; exit 1; }
+fi
+if [[ -n "${ONLY_PREFIX}" ]]; then
+  echo "🔎 --only 模式：仅部署任务名以 '${ONLY_PREFIX}' 开头的任务，其余任务不动（保护其 --continuity 历史）"
 fi
 command -v python3 >/dev/null 2>&1 || { echo "❌ 错误：未找到 python3，deploy 脚本依赖 python3 解析 JSON"; exit 1; }
 [[ -f "$CONFIG" ]] || { echo "❌ 错误：配置文件不存在 $CONFIG"; exit 1; }
@@ -38,15 +61,22 @@ PYEOF
 
 # ---------- 配置一致性校验 ----------
 # 部署前校验 README 任务表格与 schedule.json 是否漂移，避免文档与配置脱节被推到服务器
-bash "$SCRIPT_DIR/scripts/validate.sh"
+# --only 选择性部署时跳过：此时允许只处理部分任务，不应被全量校验阻断
+#（README 表格与配置漂移校验仍在 CI 与全量部署时强制）
+if [[ -z "$ONLY_PREFIX" ]]; then
+  bash "$SCRIPT_DIR/scripts/validate.sh"
+else
+  echo "ℹ️ --only 模式：跳过 README 表格与 schedule.json 全量一致性校验（CI 与全量部署仍会校验）"
+fi
 
 # 用 python3 解析 JSON 并调用 hermes：prompt 中含单引号/双引号/emoji，
 # 经 subprocess 列表传参可完全绕开 shell 转义问题
-python3 - "$CONFIG" "$SCRIPT_DIR" "${DRY_RUN:-0}" "${REPLACE:-0}" <<'PYEOF'
+python3 - "$CONFIG" "$SCRIPT_DIR" "${DRY_RUN:-0}" "${REPLACE:-0}" "$ONLY_PREFIX" <<'PYEOF'
 import json, os, subprocess, sys
 
 config_path, base_dir = sys.argv[1], sys.argv[2]
 dry_run, replace = sys.argv[3] == "1", sys.argv[4] == "1"
+only_prefix = sys.argv[5]
 
 try:
     with open(config_path, encoding="utf-8") as f:
@@ -73,6 +103,19 @@ if dup:
     print("   同名任务在 REPLACE 模式下会互相覆盖，请修正配置后重试")
     sys.exit(1)
 
+# --only 选择性部署：只保留任务名以指定前缀开头的任务（新增股票时不重动旧任务，保护其 continuity）
+if only_prefix:
+    selected = [t for t in tasks if t["name"].startswith(only_prefix)]
+    if not selected:
+        print(f"❌ --only 前缀 '{only_prefix}' 未匹配到任何任务")
+        print("   现有任务名前缀：")
+        for n in names:
+            print(f"     - {n}")
+        sys.exit(1)
+    skipped = len(tasks) - len(selected)
+    print(f"🔎 --only '{only_prefix}'：选中 {len(selected)} 个任务，跳过其余 {skipped} 个\n")
+    tasks = selected
+
 failed, done = [], []
 for i, task in enumerate(tasks, 1):
     name = task["name"]
@@ -88,8 +131,25 @@ for i, task in enumerate(tasks, 1):
         print(f"[{i}/{len(tasks)}] ✗ {name}: prompt 文件为空 {task['prompt_file']}")
         failed.append(name)
         continue
+    # 事件日历（opt-in）：任务配置 "event_calendar": true 时注入 prompt 同目录的 event_calendar.md，
+    # 注入位置在免责声明之前；文件缺失/为空按错误处理，防止静默部署出缺日历的 prompt
+    calendar_text = ""
+    if task.get("event_calendar"):
+        calendar_path = os.path.join(os.path.dirname(prompt_path), "event_calendar.md")
+        if not os.path.isfile(calendar_path):
+            print(f"[{i}/{len(tasks)}] ✗ {name}: event_calendar: true 但事件日历不存在 {calendar_path}")
+            failed.append(name)
+            continue
+        with open(calendar_path, encoding="utf-8") as f:
+            calendar_text = f.read().strip()
+        if not calendar_text:
+            print(f"[{i}/{len(tasks)}] ✗ {name}: 事件日历文件为空 {calendar_path}")
+            failed.append(name)
+            continue
     # 默认追加公共免责声明；任务配置 "disclaimer": false 时跳过（纯数据快照任务信噪比考虑）
     use_disclaimer = disclaimer and task.get("disclaimer", True)
+    if calendar_text:
+        prompt = prompt + "\n\n" + calendar_text
     if use_disclaimer:
         prompt = prompt + "\n\n" + disclaimer
 
@@ -111,8 +171,9 @@ for i, task in enumerate(tasks, 1):
             for old in [name] + task.get("replaces", []):
                 del_preview = " ".join(["hermes", "cron", "remove", old])
                 print(f"    将先执行: {del_preview}")
-        print(f"    将执行: hermes cron create \"{task['cron']}\" \"<{len(prompt)}字"
-              + ("（含公共声明）" if use_disclaimer else "") + f" prompt>\" --name \"{name}\"" + extra)
+        tags = ("（含事件日历）" if calendar_text else "") + ("（含公共声明）" if use_disclaimer else "")
+        print(f"    将执行: hermes cron create \"{task['cron']}\" \"<{len(prompt)}字{tags}"
+              + f" prompt>\" --name \"{name}\"" + extra)
         done.append(name)
         continue
 

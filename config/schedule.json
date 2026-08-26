@@ -4,7 +4,8 @@
     "cron": "50 8 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/pre_market.md",
     "deliver": "weixin",
-    "continuity": true
+    "continuity": true,
+    "event_calendar": true
   },
   {
     "name": "北部湾港-竞价初始",
@@ -28,29 +29,44 @@
     "disclaimer": false
   },
   {
+    "name": "北部湾港-盘中监控-早盘",
+    "cron": "42 9 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/intraday_monitor.md",
+    "deliver": "weixin",
+    "continuity": true,
+    "disclaimer": false,
+    "_comment": "早盘定型窗口（9:30–10:00）定性采样，填补开盘首笔到 10:05 之间的空白"
+  },
+  {
     "name": "北部湾港-盘中监控",
     "cron": "5 10,11,13,14 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/intraday_monitor.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "continuity": true,
+    "disclaimer": false
   },
   {
     "name": "北部湾港-午间舆情",
     "cron": "40 12 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/noon_sentiment.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "event_calendar": true
   },
   {
     "name": "北部湾港-盘中监控-尾盘",
     "cron": "50 14 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/intraday_monitor.md",
-    "deliver": "weixin"
+    "deliver": "weixin",
+    "continuity": true,
+    "disclaimer": false
   },
   {
     "name": "北部湾港-收盘复盘",
     "cron": "0 18 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/closing_review.md",
     "deliver": "weixin",
-    "continuity": true
+    "continuity": true,
+    "event_calendar": true
   },
   {
     "name": "北部湾港-晚间风险预警",
@@ -58,7 +74,8 @@
     "prompt_file": "tasks/000582/evening_alert.md",
     "deliver": "weixin",
     "continuity": true,
-    "disclaimer": false
+    "disclaimer": false,
+    "event_calendar": true
   },
   {
     "name": "部署健康检查",
