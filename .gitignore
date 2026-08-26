@@ -1,3 +1,4 @@
 .DS_Store
 deploy.log
 config/alert_key.sh
+**/position.md
