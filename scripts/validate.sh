@@ -40,7 +40,7 @@ for line in readme.splitlines():
             if name and cron_m:
                 readme_rows[name] = cron_m.group(1)
     elif in_table and not line.startswith("|"):
-        break  # 表格结束
+        in_table = False  # 当前表格结束，但 README 可能有多个任务表格（如股票任务表 + 系统任务表），继续扫描
 
 config_rows = {t["name"]: t["cron"] for t in tasks}
 
