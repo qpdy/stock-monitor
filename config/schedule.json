@@ -39,11 +39,20 @@
   },
   {
     "name": "北部湾港-盘中监控",
-    "cron": "5 10,11,13,14 * * 1,2,3,4,5",
+    "cron": "5,35 10,11,13,14 * * 1,2,3,4,5",
     "prompt_file": "tasks/000582/intraday_monitor.md",
     "deliver": "weixin",
     "continuity": true,
-    "disclaimer": false
+    "disclaimer": false,
+    "_comment": "事件窗口（2026-08-26 至 2026-09-22）临时加密为半小时频率；窗口结束改回 5 10,11,13,14，部署健康检查会提醒"
+  },
+  {
+    "name": "北部湾港-收盘竞价监控",
+    "cron": "2 15 * * 1,2,3,4,5",
+    "prompt_file": "tasks/000582/closing_auction.md",
+    "deliver": "weixin",
+    "disclaimer": false,
+    "_comment": "静默型：14:30→收盘位移分层阈值（A≤2 取 1%、A>2 取 1.5%）+ 极值半阈值放宽档 + 2% 绝对档；分时/快照接口失败 ⚠️ 必推（静默型任务的数据失效必须可见）"
   },
   {
     "name": "北部湾港-午间舆情",
@@ -76,6 +85,13 @@
     "continuity": true,
     "disclaimer": false,
     "event_calendar": true
+  },
+  {
+    "name": "北部湾港-周度复盘",
+    "cron": "0 10 * * 6",
+    "prompt_file": "tasks/000582/weekly_review.md",
+    "deliver": "weixin",
+    "_comment": "周六复盘本周各监控任务推送与后续走势，纯事实陈列、不给阈值调整建议（周样本量小，结论留给人）；零推送周输出确认行，作为本审计任务自身运行的确认信号"
   },
   {
     "name": "部署健康检查",
