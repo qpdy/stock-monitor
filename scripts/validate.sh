@@ -98,6 +98,37 @@ for t in tasks:
         errors.append(f"prompt 缺少故障分支措辞: {t['name']}  {t['prompt_file']}"
                       "（应含 '严禁……回复 [SILENT]' 类表述，接口故障时严禁静默）")
 
+# 6. 行情取数契约校验（防幻觉改造，2026-08-27）：
+#    a) 引用行情接口域名（qt.gtimg.cn 快照 / ifzq.gtimg.cn 日K与分时 / push2.eastmoney.com 行情备用源）
+#       的 prompt 必须走 scripts/quote.py 契约——同时含 'quote.py'（脚本命令）、'严禁自行计算'（转述纪律）、
+#       '数据脚本异常'（脚本不可用兜底话术）。公告类 API（cninfo / np-anotice-stock.eastmoney.com）不在此列。
+#    b) 回归 lint：tasks/ 下严禁再出现模型心算行情公式（防 prompt 编辑时把手工取数段落改回来）
+quote_src_pat = re.compile(r"qt\.gtimg\.cn|ifzq\.gtimg\.cn|push2\.eastmoney\.com")
+formula_pat = re.compile(
+    r"(现价−昨收|（最高−昨收|\(最高−昨收|（昨收−最低|\(昨收−最低|÷前一条收盘|÷前一日收盘)")
+for t in tasks:
+    prompt_path = os.path.join(repo_root, t["prompt_file"])
+    if not os.path.isfile(prompt_path):
+        continue
+    prompt_text = open(prompt_path, encoding="utf-8").read()
+    if quote_src_pat.search(prompt_text):
+        for word in ("quote.py", "严禁自行计算", "数据脚本异常"):
+            if word not in prompt_text:
+                errors.append(f"prompt 引用行情接口但缺少取数脚本契约要素 '{word}': {t['name']}  {t['prompt_file']}"
+                              "（行情数值必须经 scripts/quote.py 产生，模型只转述）")
+
+for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, "tasks")):
+    for fn in filenames:
+        if not fn.endswith(".md"):
+            continue
+        p = os.path.join(dirpath, fn)
+        text = open(p, encoding="utf-8").read()
+        m = formula_pat.search(text)
+        if m:
+            rel = os.path.relpath(p, repo_root)
+            errors.append(f"prompt 含模型心算行情公式 '{m.group(0)}': {rel}"
+                          "（派生值一律由 scripts/quote.py 计算，prompt 只引用脚本字段）")
+
 if errors:
     print(f"❌ 发现 {len(errors)} 处 README 表格与 schedule.json 漂移：\n")
     for e in errors:
@@ -113,3 +144,13 @@ n_silent = sum(
 print(f"✅ README 任务表格与 schedule.json 一致（{len(config_rows)} 个任务 cron 全部匹配）")
 print(f"✅ [SILENT] 防护措辞校验通过（{n_silent} 个含 [SILENT] 的 prompt 均带纯词输出与故障分支措辞）")
 PYEOF
+
+# 7. 取数脚本离线自检（防幻觉改造：行情数值全链路脚本化的回归防线）
+if [[ ! -f "$REPO_ROOT/scripts/quote.py" ]]; then
+  echo "❌ 错误：scripts/quote.py 不存在（行情任务的全部数值依赖该脚本产生）"
+  exit 1
+fi
+if ! python3 "$REPO_ROOT/scripts/quote.py" selftest; then
+  echo "❌ scripts/quote.py selftest 未通过"
+  exit 1
+fi

@@ -2,3 +2,4 @@
 deploy.log
 config/alert_key.sh
 **/position.md
+data/
