@@ -16,6 +16,7 @@
   quote.py kline <sym> [--days N] [--since YYYY-MM-DD] [--this-week] [--this-month] [--prev-month]
   quote.py minute <sym> [--closing]
   quote.py audit [--this-week]
+  quote.py reconcile [--date YYYY-MM-DD] [--runs-dir DIR] [--tasks t1,t2,...]
   quote.py selftest
 
 snap 符号如 sz000582 / sh000001；多标的按行首代码（v_sz000582）匹配，与行序无关。
@@ -85,11 +86,22 @@ LINE_CLOSE_NOT_READY = "⚠️ 数据源异常（收盘竞价分时数据未回�
 LINE_SOURCE_NOTICE = "⚠️ 主数据源异常，已切换备用源（无快照时间戳，交易日/时效校验失效）"
 LINE_NO_DATA_PREOPEN = ("📊 集合竞价数据尚未产生：现价=昨收 {prev}元、成交量0、快照 {ts}，"
                         "竞价虚拟价以9:25竞价结果推送为准（9:20前可撤单，虚拟数据仅供参考）")
+LINE_RECONCILE_NO_RUNS = ("⚠️ 推送对账失败：当日无任何取数记录且无数据行，任务链路疑似整体未运行"
+                          "（hermes 停摆或取数脚本全挂），请人工检查")
+LINE_RECONCILE_MISMATCH = ("⚠️ 推送对账发现 {n} 条无取数记录支撑的数据行（模型编造或转述漂移实锤），"
+                           "详见明细，请人工核查当日推送")
+LINE_RECONCILE_MISSING = ("⚠️ 推送对账不完整：{n} 个任务的当日运行导出缺失，对账覆盖不全，"
+                          "请人工检查导出步骤后重跑 reconcile")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 AUDIT_FILE = os.path.join(DATA_DIR, "quotes.jsonl")
-AUDIT_ROTATED = AUDIT_FILE + ".1"      # 轮转一代（覆盖式，只保留最近一代）
-AUDIT_MAX_BYTES = 20 * 1024 * 1024     # 单文件 20MB 上限（约数月量级，audit 汇总两代合并读取）
+AUDIT_GENERATIONS = 4                  # 轮转保留的历史代号数（.1 最新 … .N 最旧），加当前文件共 N+1 份
+AUDIT_MAX_BYTES = 20 * 1024 * 1024     # 单文件 20MB 上限（audit 汇总全部代号并读取；事件窗口半小时级
+                                       # 取数下单代覆盖天数短，多代保留拉长对账回溯窗）
+
+
+def _audit_gen(i):
+    return "%s.%d" % (AUDIT_FILE, i)
 
 # 行情时间体系固定为北京时间（UTC+8）：cron 触发、交易所时钟、接口快照时间戳均按
 # 北京时间对齐，脚本判定不随部署环境本地时区漂移
@@ -187,16 +199,22 @@ def out_json(obj):
 
 
 def audit_append(record):
-    """追加审计日志；当前文件超上限先轮转为 .1（覆盖旧一代）；写失败仅告警，绝不影响数据路径。"""
+    """追加审计日志；当前文件超上限先轮转：删最旧一代、各代号顺移（.N-1→.N … .1→.2）、
+    当前文件改名 .1；写失败仅告警，绝不影响数据路径。"""
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         try:
             if os.path.getsize(AUDIT_FILE) > AUDIT_MAX_BYTES:
                 try:
-                    os.remove(AUDIT_ROTATED)
+                    os.remove(_audit_gen(AUDIT_GENERATIONS))
                 except OSError:
                     pass
-                os.rename(AUDIT_FILE, AUDIT_ROTATED)
+                for i in range(AUDIT_GENERATIONS - 1, 0, -1):
+                    try:
+                        os.rename(_audit_gen(i), _audit_gen(i + 1))
+                    except OSError:
+                        pass  # 中间代缺失（如旧部署只存 .1）不阻塞后续顺移
+                os.rename(AUDIT_FILE, _audit_gen(1))
         except OSError:
             pass  # 轮转失败不阻塞本次写入
         with open(AUDIT_FILE, "a", encoding="utf-8") as f:
@@ -206,8 +224,10 @@ def audit_append(record):
 
 
 def audit_files():
-    """审计日志文件列表（轮转旧代在前保证时间顺序）；两代均不存在返回空表。"""
-    return [p for p in (AUDIT_ROTATED, AUDIT_FILE) if os.path.isfile(p)]
+    """审计日志文件列表（最旧代在前保证时间顺序，audit 汇总按此合并读取）。
+    旧部署仅存 .1 一代的自动兼容：缺号跳过；全部不存在返回空表。"""
+    gens = [_audit_gen(i) for i in range(AUDIT_GENERATIONS, 0, -1)]
+    return [p for p in gens + [AUDIT_FILE] if os.path.isfile(p)]
 
 
 def market_phase(now):
@@ -1139,6 +1159,195 @@ def mode_audit(args):
     return 0
 
 
+# ---------------------------------------------------------------- 推送对账（reconcile）
+
+# data_line 识别：以（可选的备用源前缀 +）交易所代码开头、必含"昨收"字段、
+# "快照…"结尾的单行文本。要求"昨收"是防误报：模型自由文本中的不完整引用
+# （如"sz000582 现价10.81元，快照2026-08-27 10:05:03"）没有该字段，不构成
+# 数据行——误报"编造实锤"会消耗告警信用。verdict=ok 的标准 data_line 必含
+# 昨收（腾讯/东财解析均产出该字段；字段缺失的行 verdict 不会是 ok、任务不嵌）。
+# data_line 本身不含引号与反斜杠，hermes runs 无论以纯文本还是 JSON 形态导出，
+# 行内文字形态不变，同一正则可扫两种形态（\uXXXX 转义在扫描前统一还原）。
+RE_DATA_LINE = re.compile(
+    r"(?:［备用源］\s*)?[a-z]{2}\d{6}\s[^\n]*?昨收[^\n]*?快照"
+    r"(?:缺失|\d{4}-\d{2}-\d{2}(?:\s\d{2}:\d{2}(?::\d{2})?)?)")
+RE_UNICODE_ESC = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _cron_dow_weekday(cron_expr):
+    """cron 第 5 段（dow）是否覆盖任一周一至周五。周六才跑的任务（周度复盘）
+    不参与每日对账——工作日必无其导出文件，纳入会常态化误报 runs_missing。"""
+    fields = str(cron_expr or "").split()
+    if len(fields) != 5:
+        return True  # 形态异常按纳入处理：宁多对账不漏
+    days = set()
+    for part in fields[4].split(","):
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", part.strip())
+        if not m:  # "*"、步进等超出预期的一律纳入
+            return True
+        a, b = int(m.group(1)) % 7, int(m.group(2) or m.group(1)) % 7  # 0 与 7 均为周日
+        if a <= b:
+            days.update(range(a, b + 1))
+        else:  # 跨周区间（如 6-1）按并集语义
+            days.update(range(a, 7))
+            days.update(range(0, b + 1))
+    return bool(days & set(range(1, 6)))
+
+
+def reconcile_task_names():
+    """对账任务清单现场读取 config/schedule.json：prompt 不在 tasks/_system/ 下、
+    且 cron 覆盖工作日的任务（即全部行情类任务）。与部署健康检查「期望清单现场
+    读取」同哲学——新增股票后清单自动扩展，无需改本脚本。读取失败返回 None。"""
+    cfg = os.path.join(os.path.dirname(DATA_DIR), "config", "schedule.json")
+    try:
+        with open(cfg, encoding="utf-8") as f:
+            tasks = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return [t["name"] for t in tasks
+            if not str(t.get("prompt_file") or "").replace("\\", "/").startswith("tasks/_system/")
+            and _cron_dow_weekday(t.get("cron"))]
+
+
+def reconcile_core(task_names, runs_dir, date, audit_paths):
+    """对账核心（纯函数、可离线测试）。README 对账纪律的代码化：任务输出中出现的
+    每条 data_line 必须能在审计记录中找到同一字面值——推送时点无对应记录即为编造。
+
+    匹配集取审计日志全部代号、不限日期的 snap 记录 parsed[].data_line。不按日期
+    窄化是防误报的关键：hermes runs 导出为整文件（含多日历史运行记录），且
+    continuity 会让模型合法引用上一交易日的数据行（周一指向上周五），任何按当日
+    ±N 天窄化的窗口都会把窗外的真实历史数据行误判为「编造实锤」，每个交易日误报
+    一次、告警信用一周烧光。放宽到全量不削弱检出力：匹配是精确字面比对，数据行含
+    精确到秒的快照时间戳与现价/涨跌幅/昨收，凭空编造撞上任一条历史真实数据行的
+    概率可忽略（2026-08-27 事故的假数据行在全量日志中同样无处匹配）。代价是日志
+    轮转挤掉最旧代后、比该代更老的导出行会转为无支撑——runs 仅保留 7 天而日志覆盖
+    远超此，实际不触发。kline/minute 记录不入匹配集：其推送数值（close_pct/收盘
+    位移等）的逐值对账属后续版本，本版只锚 data_line。
+
+    snap_runs 只计当日：它承担的是链路活性判定，与匹配集无关。节假日免特判——
+    任务运行即会调用脚本（not_trading_day 也是 snap 记录），故当日 snap_runs==0
+    且零数据行 ⇔ 白天链路整体未运行，判 no_runs_data 必推。"""
+    allowed, snap_runs = set(), 0
+    for path in audit_paths:
+        try:
+            f = open(path, encoding="utf-8")
+        except OSError:
+            continue
+        with f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("mode") != "snap":
+                    continue
+                if str(rec.get("ts") or "")[:10] == date:
+                    snap_runs += 1          # 活性计数锁当日；匹配集不限日期
+                parsed = rec.get("parsed")
+                if isinstance(parsed, list):
+                    for s in parsed:
+                        if isinstance(s, dict) and s.get("data_line"):
+                            allowed.add(s["data_line"])
+    tasks_out, unmatched, missing = [], [], []
+    for name in task_names:
+        rel = "%s_%s.txt" % (name, date)
+        path = os.path.join(runs_dir, rel)
+        entry = {"task": name, "file": rel, "bytes": 0,
+                 "data_lines": 0, "matched": 0, "unmatched": []}
+        if os.path.isfile(path):
+            entry["bytes"] = os.path.getsize(path)
+        if not entry["bytes"]:
+            missing.append(name)
+            tasks_out.append(entry)
+            continue
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        if "\\u" in text:  # hermes 以 ensure_ascii JSON 导出时中文变 \uXXXX，先还原再扫
+            text = RE_UNICODE_ESC.sub(lambda m: chr(int(m.group(1), 16)), text)
+        for hit in RE_DATA_LINE.findall(text):
+            hit = hit.strip()
+            if not hit:
+                continue
+            entry["data_lines"] += 1
+            if hit in allowed:
+                entry["matched"] += 1
+            else:
+                entry["unmatched"].append(hit)
+                unmatched.append({"task": name, "line": hit})
+        tasks_out.append(entry)
+    total_lines = sum(t["data_lines"] for t in tasks_out)
+    total_matched = sum(t["matched"] for t in tasks_out)
+    if snap_runs == 0 and total_lines == 0:
+        verdict = "no_runs_data"
+    elif unmatched:
+        verdict = "mismatch"
+    elif missing:
+        verdict = "runs_missing"
+    else:
+        verdict = "ok"
+    summary = ("【推送对账 %s】任务 %d/%d 导出齐全，数据行 %d 条（匹配 %d、无支撑 %d），"
+               "当日取数 %d 次" % (date, len(task_names) - len(missing), len(task_names),
+                                  total_lines, total_matched, len(unmatched), snap_runs))
+    return {"verdict": verdict, "summary_line": summary, "issues": unmatched,
+            "missing_tasks": missing, "tasks": tasks_out,
+            "audit_snap_runs": snap_runs}
+
+
+def _cleanup_runs(runs_dir, keep_days=7):
+    """清理过期运行导出（临时中间产物，非审计数据——权威记录在 quotes.jsonl）。
+    失败静默：清理不影响对账输出。保留 7 天供排障回看。"""
+    try:
+        cutoff = datetime.now().timestamp() - keep_days * 86400
+        for fn in os.listdir(runs_dir):
+            if not fn.endswith(".txt"):
+                continue
+            p = os.path.join(runs_dir, fn)
+            try:
+                if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def mode_reconcile(args):
+    now = now_bj()
+    date = args.date or now.strftime("%Y-%m-%d")
+    runs_dir = args.runs_dir or os.path.join(DATA_DIR, "runs")
+    if args.tasks:
+        names = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    else:
+        names = reconcile_task_names()
+        if not names:
+            out_json({"mode": "reconcile", "date": date,
+                      "verdict": "no_config",
+                      "verdict_line": "⚠️ 对账任务清单读取失败（config/schedule.json "
+                                      "缺失或不可解析），请人工检查",
+                      "summary_line": ""})
+            return 0
+    result = reconcile_core(names, runs_dir, date, audit_files())
+    line_map = {"no_runs_data": LINE_RECONCILE_NO_RUNS,
+                "mismatch": LINE_RECONCILE_MISMATCH.format(n=len(result["issues"])),
+                "runs_missing": LINE_RECONCILE_MISSING.format(n=len(result["missing_tasks"])),
+                "ok": None}
+    result["verdict_line"] = line_map.get(result["verdict"])
+    result.update({"mode": "reconcile", "date": date, "runs_dir": runs_dir,
+                   "note": "只读对账：任务输出数据行 vs 审计记录逐条精确匹配（匹配集为"
+                           "审计日志全量、不限日期——导出含多日历史与 continuity 引用"
+                           "上一交易日均属合法）；kline/minute 类数值不在本版对账范围。"
+                           "退出码恒为 0（对账结论以 verdict 字段为准，非零退出码仅表示"
+                           "脚本自身异常 script_error）"})
+    out_json(result)
+    # 仅在对账当日（非 --date 回溯排障）时清理过期导出
+    if date == now.strftime("%Y-%m-%d"):
+        _cleanup_runs(runs_dir)
+    return 0
+
+
 # ---------------------------------------------------------------- selftest（离线）
 
 def _tf(price="10.81", prev="10.78", open_="10.83", high="10.85", low="10.72",
@@ -1488,28 +1697,93 @@ def _run_selftest():
     check("now_bj_utc8",
           abs((now_bj() - (utc_now + timedelta(hours=8))).total_seconds()) < 120)
 
-    # 21) 审计轮转：超上限当前文件转 .1（旧 .1 被覆盖）、新记录写回当前文件；
-    #     未超上限不轮转；audit_files 两代合并且顺序正确（旧代在前）
+    # 21) 审计轮转：超上限当前文件转 .1、各代号顺移（.1→.2）、最旧一代被挤掉；
+    #     未超上限不轮转；audit_files 全代合并且顺序正确（旧代在前）
     tmpdir = tempfile.mkdtemp(prefix="quote_selftest_")
-    _old_file, _old_rot, _old_max = AUDIT_FILE, AUDIT_ROTATED, AUDIT_MAX_BYTES
+    _old_file, _old_max, _old_gens = AUDIT_FILE, AUDIT_MAX_BYTES, AUDIT_GENERATIONS
     try:
         globals()["AUDIT_FILE"] = os.path.join(tmpdir, "quotes.jsonl")
-        globals()["AUDIT_ROTATED"] = globals()["AUDIT_FILE"] + ".1"
         globals()["AUDIT_MAX_BYTES"] = 100
+        globals()["AUDIT_GENERATIONS"] = 2
         with open(globals()["AUDIT_FILE"], "w", encoding="utf-8") as f:
             f.write("x" * 150 + "\n")  # 151 字节，已超 100 上限
         audit_append({"ts": "2026-08-27 10:00:00", "mode": "snap", "verdict": "ok"})
+        _f1 = globals()["AUDIT_FILE"] + ".1"
+        _f2 = globals()["AUDIT_FILE"] + ".2"
         check("audit_rotate",
-              os.path.getsize(globals()["AUDIT_ROTATED"]) == 151
+              os.path.getsize(_f1) == 151
               and 0 < os.path.getsize(globals()["AUDIT_FILE"]) < 100
-              and audit_files() == [globals()["AUDIT_ROTATED"], globals()["AUDIT_FILE"]])
+              and audit_files() == [_f1, globals()["AUDIT_FILE"]])
         audit_append({"ts": "2026-08-27 10:05:00", "mode": "snap", "verdict": "ok"})
         check("audit_no_rotate_below",
-              os.path.getsize(globals()["AUDIT_FILE"]) > 100)  # 未超限：两代都在、未再轮转
+              os.path.getsize(globals()["AUDIT_FILE"]) > 100)  # 未超限：未再轮转
+        audit_append({"ts": "2026-08-27 10:10:00", "mode": "snap", "verdict": "ok"})
+        check("audit_rotate_shift",
+              os.path.getsize(_f2) == 151 and os.path.getsize(_f1) > 100  # .1→.2 顺移、新 .1 为上次内容
+              and audit_files() == [_f2, _f1, globals()["AUDIT_FILE"]]
+              and not os.path.isfile(globals()["AUDIT_FILE"] + ".3"))  # 超出保留代数不产生新代号
     finally:
-        globals()["AUDIT_FILE"], globals()["AUDIT_ROTATED"], globals()["AUDIT_MAX_BYTES"] = (
-            _old_file, _old_rot, _old_max)
+        globals()["AUDIT_FILE"], globals()["AUDIT_MAX_BYTES"], globals()["AUDIT_GENERATIONS"] = (
+            _old_file, _old_max, _old_gens)
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 22) 推送对账 reconcile：匹配/编造检出/导出缺失/链路死亡四分支；kline 记录
+    #     不入匹配集；导出整文件含多日历史运行记录（hermes runs 实际形态）与
+    #     continuity 引用上一交易日的数据行均须匹配——匹配集按日期窄化会把这两类
+    #     真实数据行误判为编造实锤，每个交易日误报一次，本段锁住该回归
+    tmpdir2 = tempfile.mkdtemp(prefix="quote_reconcile_")
+    try:
+        rdir = os.path.join(tmpdir2, "runs")
+        os.makedirs(rdir)
+        good = "sz000582 北部湾港 10.81元 +0.28% 昨收10.78 快照2026-08-27 10:05:03"
+        yday = "sz000582 北部湾港 10.78元 +0.00% 昨收10.78 快照2026-08-26 15:00:03"
+        old = "sz000582 北部湾港 10.50元 +0.10% 昨收10.49 快照2026-08-21 14:30:03"
+        fake = "sz000582 北部湾港 10.90元 +1.11% 昨收10.78 快照2026-08-27 09:16:02"
+        rjson = os.path.join(tmpdir2, "quotes.jsonl")
+        with open(rjson, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "2026-08-27 10:05:00", "mode": "snap",
+                                "parsed": [{"code": "sz000582", "data_line": good}]}) + "\n")
+            f.write(json.dumps({"ts": "2026-08-26 15:00:00", "mode": "snap",
+                                "parsed": [{"code": "sz000582", "data_line": yday}]}) + "\n")
+            f.write(json.dumps({"ts": "2026-08-21 14:30:00", "mode": "snap",
+                                "parsed": [{"code": "sz000582", "data_line": old}]}) + "\n")
+            f.write(json.dumps({"ts": "2026-08-27 18:00:00", "mode": "kline",
+                                "parsed": None}) + "\n")
+        with open(os.path.join(rdir, "任务A_2026-08-27.txt"), "w", encoding="utf-8") as f:
+            f.write("【2026-08-27 10:05】\n" + good + "\n上次输出引用：" + yday
+                    + "\n[run 2026-08-21]\n" + old + "\n")  # 整文件导出含 6 天前的历史运行
+        res = reconcile_core(["任务A"], rdir, "2026-08-27", [rjson])
+        check("reconcile_ok", res["verdict"] == "ok"
+              and res["tasks"][0]["data_lines"] == 3
+              and res["tasks"][0]["matched"] == 3      # 当日/昨日/6 天前三条真实行全匹配
+              and res["audit_snap_runs"] == 1)         # 活性计数只算当日 27 日；kline 不计
+        with open(os.path.join(rdir, "任务B_2026-08-27.txt"), "w", encoding="utf-8") as f:
+            f.write(fake + "\n")
+        res = reconcile_core(["任务A", "任务B"], rdir, "2026-08-27", [rjson])
+        check("reconcile_fabricated", res["verdict"] == "mismatch"
+              and len(res["issues"]) == 1
+              and res["issues"][0]["task"] == "任务B"
+              and fake in res["issues"][0]["line"])
+        res = reconcile_core(["任务C"], rdir, "2026-08-27", [rjson])
+        check("reconcile_missing", res["verdict"] == "runs_missing"
+              and res["missing_tasks"] == ["任务C"])
+        res = reconcile_core(["任务A"], rdir, "2026-08-25", [rjson])
+        check("reconcile_no_runs", res["verdict"] == "no_runs_data"
+              and res["audit_snap_runs"] == 0)
+        check("reconcile_dow_filter",
+              _cron_dow_weekday("5,35 10,11,13,14 * * 1,2,3,4,5")
+              and _cron_dow_weekday("45 8 * * *")
+              and not _cron_dow_weekday("0 10 * * 6"))
+        # 模型自由文本中的不完整引用（无"昨收"字段）不得计入数据行——防误报狼来了
+        with open(os.path.join(rdir, "任务D_2026-08-27.txt"), "w", encoding="utf-8") as f:
+            f.write("sz000582 现价10.81元，快照2026-08-27 10:05:03，较开盘回落\n"
+                    + good.replace("北部湾港", "\\u5317\\u90e8\\u6e7e\\u6e2f") + "\n")  # JSON 转义形态
+        res = reconcile_core(["任务D"], rdir, "2026-08-27", [rjson])
+        check("reconcile_noise_immune", res["verdict"] == "ok"
+              and res["tasks"][0]["data_lines"] == 1
+              and res["tasks"][0]["matched"] == 1)  # 转义行还原后匹配、引用行不计
+    finally:
+        shutil.rmtree(tmpdir2, ignore_errors=True)
 
     print(("✅ selftest 全部通过（%d 项断言）" % passed[0]) if not fails
           else "❌ selftest 失败 %d 项：%s（通过 %d 项）"
@@ -1567,6 +1841,13 @@ def parse_args(argv):
     mp.add_argument("--closing", action="store_true")
     ap = sub.add_parser("audit", help="审计日志只读汇总（对账用）")
     ap.add_argument("--this-week", dest="this_week", action="store_true")
+    rp = sub.add_parser("reconcile", help="推送对账：任务输出数据行 vs 审计记录（幻觉检测）")
+    rp.add_argument("--date", type=_valid_anchor, metavar="YYYY-MM-DD",
+                    help="对账日期（默认今日北京时间）")
+    rp.add_argument("--runs-dir", dest="runs_dir", metavar="DIR",
+                    help="hermes 运行记录导出目录（默认 data/runs，文件名 <任务名>_<日期>.txt）")
+    rp.add_argument("--tasks", metavar="t1,t2,...",
+                    help="逗号分隔的任务名（默认现场读 schedule.json 的行情类任务）")
     sub.add_parser("selftest", help="离线自检（无网络，CI/健康检查用）")
     return p.parse_args(argv)
 
@@ -1577,7 +1858,8 @@ def main(argv=None):
         parse_args(["-h"])
         return 2
     handlers = {"snap": mode_snap, "kline": mode_kline, "minute": mode_minute,
-                "audit": mode_audit, "selftest": lambda a: _run_selftest()}
+                "audit": mode_audit, "reconcile": mode_reconcile,
+                "selftest": lambda a: _run_selftest()}
     try:
         return handlers[args.mode](args) or 0
     except SystemExit:

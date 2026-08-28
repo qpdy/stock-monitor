@@ -67,13 +67,18 @@ for name in config_rows:
     if name in readme_rows and config_rows[name] != readme_rows[name]:
         errors.append(f"cron 不一致: {name}  配置={config_rows[name]!r}  README={readme_rows[name]!r}")
 
-# 4. [SILENT] 防护措辞静态校验：凡含 [SILENT] 的 prompt 必须同时具备
+# 4. [SILENT] 防护措辞静态校验：凡实际指令模型输出 [SILENT]（静默型任务）的 prompt
+#    必须同时具备
 #    a) 纯词输出措辞 —— 系统按精确词识别 [SILENT]，删掉该约束会导致休市日误推送
 #    b) 故障分支措辞 —— 接口故障/数据异常时严禁静默，删掉会导致监控失效且无法被发现
+#    判定：剔除禁止性引用（"严禁……回复 [SILENT]"、"不回复 [SILENT]"）后仍含 [SILENT]
+#    才视为静默型任务——每日必推型任务（如推送对账）只含禁止性引用，不适用 a)，
+#    其"ok 分支必须输出确认行"的活性设计本就与静默机制相反。
 #    只能防"编辑 prompt 时误删防护分支"的回归；LLM 运行时是否真的只输出 [SILENT]
 #    无法在 CI 中断言，不在此范围
 silent_word_pat = re.compile(r"仅回复 \[SILENT\] 一个词|仅为 \[SILENT\] 这一个词")
 silent_fault_pat = re.compile(r"严禁[^。；\n]{0,30}回复 \[SILENT]")
+silent_ref_pat = re.compile(r"严禁[^。；\n]{0,30}回复 \[SILENT\]|不回复 \[SILENT\]")
 for t in tasks:
     prompt_path = os.path.join(repo_root, t["prompt_file"])
     if not os.path.isfile(prompt_path):
@@ -91,12 +96,16 @@ for t in tasks:
             errors.append(f"事件日历文件为空: {t['name']}  {cal_path}")
     if "[SILENT]" not in prompt_text:
         continue
-    if not silent_word_pat.search(prompt_text):
-        errors.append(f"prompt 缺少 [SILENT] 纯词输出措辞: {t['name']}  {t['prompt_file']}"
-                      "（应含 '仅回复 [SILENT] 一个词' 类表述）")
-    if not silent_fault_pat.search(prompt_text):
-        errors.append(f"prompt 缺少故障分支措辞: {t['name']}  {t['prompt_file']}"
-                      "（应含 '严禁……回复 [SILENT]' 类表述，接口故障时严禁静默）")
+    # 剔除禁止性引用后仍含 [SILENT] → 静默型任务（指令模型在某分支输出 [SILENT]）；
+    # 只剩禁止性引用（如推送对账的"严禁回复 [SILENT]"）→ 每日必推型，不适用 a)
+    reduced = silent_ref_pat.sub("", prompt_text)
+    if "[SILENT]" in reduced:
+        if not silent_word_pat.search(prompt_text):
+            errors.append(f"prompt 缺少 [SILENT] 纯词输出措辞: {t['name']}  {t['prompt_file']}"
+                          "（应含 '仅回复 [SILENT] 一个词' 类表述）")
+        if not silent_fault_pat.search(prompt_text):
+            errors.append(f"prompt 缺少故障分支措辞: {t['name']}  {t['prompt_file']}"
+                          "（应含 '严禁……回复 [SILENT]' 类表述，接口故障时严禁静默）")
 
 # 6. 行情取数契约校验（防幻觉改造，2026-08-27）：
 #    a) 引用行情接口域名（qt.gtimg.cn 快照 / ifzq.gtimg.cn 日K与分时 / push2.eastmoney.com 行情备用源）
@@ -139,10 +148,11 @@ if errors:
 n_silent = sum(
     1 for t in tasks
     if os.path.isfile(os.path.join(repo_root, t["prompt_file"]))
-    and "[SILENT]" in open(os.path.join(repo_root, t["prompt_file"]), encoding="utf-8").read()
+    and "[SILENT]" in silent_ref_pat.sub(
+        "", open(os.path.join(repo_root, t["prompt_file"]), encoding="utf-8").read())
 )
 print(f"✅ README 任务表格与 schedule.json 一致（{len(config_rows)} 个任务 cron 全部匹配）")
-print(f"✅ [SILENT] 防护措辞校验通过（{n_silent} 个含 [SILENT] 的 prompt 均带纯词输出与故障分支措辞）")
+print(f"✅ [SILENT] 防护措辞校验通过（{n_silent} 个静默型 prompt 均带纯词输出与故障分支措辞）")
 PYEOF
 
 # 7. 取数脚本离线自检（防幻觉改造：行情数值全链路脚本化的回归防线）

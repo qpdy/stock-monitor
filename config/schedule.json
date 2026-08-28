@@ -96,6 +96,14 @@
     "_comment": "周六复盘本周各监控任务推送与后续走势，纯事实陈列、不给阈值调整建议（周样本量小，结论留给人）；零推送周输出确认行，作为本审计任务自身运行的确认信号"
   },
   {
+    "name": "推送对账",
+    "cron": "30 22 * * 1,2,3,4,5",
+    "prompt_file": "tasks/_system/push_reconcile.md",
+    "deliver": "weixin",
+    "disclaimer": false,
+    "_comment": "幻觉检测持续化：导出当日各任务 hermes 运行记录 → quote.py reconcile 与审计日志逐条比对（任务输出中每条 data_line 必须有取数记录支撑，无支撑即编造实锤）。每日必推一行 summary_line（ok 也推）——本行兼作全天链路收盘确认与本任务自身活性证明；22:30 在晚间预警后、次日开盘前留足人工介入窗口。对账清单自动读 schedule.json，加股票自动扩展"
+  },
+  {
     "name": "部署健康检查",
     "cron": "45 8 * * *",
     "prompt_file": "tasks/_system/deploy_health_check.md",
