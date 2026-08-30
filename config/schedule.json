@@ -96,6 +96,22 @@
     "_comment": "周六复盘本周各监控任务推送与后续走势，纯事实陈列、不给阈值调整建议（周样本量小，结论留给人）；零推送周输出确认行，作为本审计任务自身运行的确认信号"
   },
   {
+    "name": "北部湾港-周末舆情-周六",
+    "cron": "30 19 * * 6",
+    "prompt_file": "tasks/000582/weekend_sentiment.md",
+    "deliver": "weixin",
+    "event_calendar": true,
+    "_comment": "周末休市期公告/新闻增量监控 + 推送通道保活（iLink context_token 24h 无消息失效死锁，2026-08-30 事故实证）。必推型：无事件也推一行确认（周末通道心跳）。周六 19:30：距周五 22:30 对账 21h、距周日 18:30 档 23h，均在 24h 窗口内留余量"
+  },
+  {
+    "name": "北部湾港-周末舆情-周日",
+    "cron": "30 18 * * 0",
+    "prompt_file": "tasks/000582/weekend_sentiment.md",
+    "deliver": "weixin",
+    "event_calendar": true,
+    "_comment": "同周六档。周日 18:30：距周六 19:30 间隔 23h（<24h 留 1h 余量），距周一 8:50 盘前情报 14.3h——封死周日零消息导致的周一晨 token 失效缺口。搜索链路（EXA key / curl allowlist）修复前会持续推 ⚠️ 数据源异常，兼任链路周末健康探测。周日用 0 而非 7（0 为所有 cron 实现均认的传统写法，7 是 POSIX 扩展）"
+  },
+  {
     "name": "推送对账",
     "cron": "30 22 * * 1,2,3,4,5",
     "prompt_file": "tasks/_system/push_reconcile.md",

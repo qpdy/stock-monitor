@@ -17,8 +17,8 @@ python3 "$HOME/stock-monitor/scripts/quote.py" reconcile
 （脚本内完成全部对账：审计日志全部代号、不限日期的 snap 数据行集合 ↔ 各导出文件中出现的 data_line 逐条精确匹配、导出完整性检查、当日取数记录存在性检查。匹配集不限日期是刻意设计——导出整文件含多日历史运行记录、continuity 也会让上一交易日的数据行被合法引用，按日期窄化会把这些真实数据行误报成编造。对账任务清单自动从 schedule.json 读取，无需传参。）
 
 【verdict 分支】以脚本输出 verdict 字段为准，严禁自创或合并分支；verdict_line 与 summary_line 字段原样嵌入推送：
-- ok → 原样输出 summary_line 一行并结束（每日必推、不回复 [SILENT]——本行是全天监控链路对账通过的确认信号，也是本任务自身正常运行的活性证明；节假日数据行 0 条属正常通过形态）；
-- mismatch → 原样输出 verdict_line 与 summary_line，随后逐条列出脚本 issues[]（每条一行：任务名 + 数据行原文）——无取数记录支撑的数据行是编造或转述漂移实锤，当晚必须可见；
+- ok → 原样输出 summary_line 一行（每日必推、不回复 [SILENT]——本行是全天监控链路对账通过的确认信号，也是本任务自身正常运行的活性证明；节假日数据行 0 条属正常通过形态）。summary_line 含"疑似复读"字样时，另起一行"🔔 复读提示（非编造实锤）："，随后按脚本 echo_today[] 与 echo_prior[] 逐条转述（每条一行：任务名、重复次数、数据行原文）——echo_today（当日行重复）标【强提示】，echo_prior（历史行重复）标【弱提示】，均不视同编造实锤、供人工核对推送原文（2026-08-30 增：复读型幻觉在全量精确匹配下会通过，重复行检测是唯一可见信号）；
+- mismatch → 原样输出 verdict_line 与 summary_line，随后逐条列出脚本 issues[]（每条一行：任务名 + 数据行原文）——无取数记录支撑的数据行是编造或转述漂移实锤，当晚必须可见；echo_today[] / echo_prior[] 非空时同样按上款格式逐条转述；
 - runs_missing / no_runs_data → 原样输出 verdict_line 与 summary_line，并按 missing_tasks[] 列出缺失任务名；
 - no_config → 原样输出 verdict_line；
 - 脚本不可用（命令不存在、python3 报错、输出为空或无法解析）→ 输出 '⚠️ 数据脚本异常，请人工检查' 并结束，严禁回复 [SILENT]，严禁自行比对、抽样或以任何方式替代脚本对账（对账链路自身故障必须可见，不得静默）。

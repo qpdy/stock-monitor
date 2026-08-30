@@ -15,6 +15,7 @@
                          [--event-anchor YYYY-MM-DD] [--minute-recap HH:MM]
   quote.py kline <sym> [--days N] [--since YYYY-MM-DD] [--this-week] [--this-month] [--prev-month]
   quote.py minute <sym> [--closing]
+  quote.py news <sym> [--since YYYY-MM-DD]
   quote.py audit [--this-week]
   quote.py reconcile [--date YYYY-MM-DD] [--runs-dir DIR] [--tasks t1,t2,...]
   quote.py selftest
@@ -53,6 +54,12 @@ TENCENT_KLINE_URL = ("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 TENCENT_MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}"
 EASTMONEY_URL = ("https://push2.eastmoney.com/api/qt/stock/get"
                  "?secid={secid}&fields=f43,f44,f45,f46,f47,f48,f58,f60,f170")
+# 个股新闻确定性枚举（2026-08-30 增，召回可审计改造）：搜索关键词永远列不全，
+# 个股维度全量枚举不依赖命中——公告已有巨潮双源枚举，新闻此前是唯一靠模型
+# 自觉搜索的召回面（8-27「北港邮11」漏报的根因层）。分页参数实测：pageSize
+# 有效（50 条约覆盖 3 个月）、ps/p 无效（恒返 10 条），单页 50 足够任何检索窗口。
+EASTMONEY_NEWS_URL = ("https://np-listapi.eastmoney.com/comm/web/getListInfo"
+                      "?client=web&mTypeAndCode={mcode}&type=1&pageSize=50&p=1")
 
 # 腾讯快照字段索引（2026-08-27 实盘核对）
 F_NAME, F_CODE = 1, 2
@@ -368,6 +375,27 @@ def parse_minute(obj, code):
             entries.append((parts[0], to_f(parts[1]),
                             to_f(parts[2]) if len(parts) > 2 else None))
     return date, entries
+
+
+def parse_news_items(obj):
+    """东财个股新闻列表 JSON → items[{date,time,title,url}]（纯函数、可离线测试）。
+    Art_ShowTime 形如 '2026-08-26 13:17:27'；标题或时间缺失/畸形的条目跳过
+    （标题是本清单的全部价值，缺标题的条目不可核对）；URL 缺失保留条目、url 置空。"""
+    lst = (obj.get("data") or {}).get("list") or []
+    items = []
+    for it in lst:
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("Art_Title") or "").strip()
+        show = str(it.get("Art_ShowTime") or "").strip()
+        if not title or not show:
+            continue
+        m = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})", show)
+        if not m:
+            continue
+        items.append({"date": m.group(1), "time": m.group(2), "title": title,
+                      "url": str(it.get("Art_OriginUrl") or it.get("Art_Url") or "").strip()})
+    return items
 
 
 # ---------------------------------------------------------------- 评估（纯函数）
@@ -1159,6 +1187,44 @@ def mode_audit(args):
     return 0
 
 
+def mode_news(args):
+    """个股新闻确定性枚举：标题级清单供任务逐条核对（点开原文仍由模型执行）。
+    --since 通常传上一交易日（与盘前搜索窗口同锚点）；单页 50 条约覆盖 3 个月，
+    任何窗口都够。清单为空视为异常（该股近 3 个月恒有新闻，空清单更可能是接口
+    静默失败——与巨潮空结果同风险）。原始响应入审计日志，与其他模式同可回查。"""
+    now = now_bj()
+    result = {"mode": "news", "symbol": args.symbol,
+              "generated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
+    raw = ""
+    try:
+        mcode = ("0." if args.symbol.startswith("sz") else "1.") + args.symbol[2:]
+        body = http_get(EASTMONEY_NEWS_URL.format(mcode=mcode),
+                        headers={"Referer": "https://quote.eastmoney.com/"})
+        raw = body.decode("utf-8", errors="replace")
+        items = parse_news_items(json.loads(raw))
+        if not items:
+            raise ValueError("新闻列表为空（接口静默失败或结构变更）")
+    except Exception as e:
+        result.update({"verdict": "source_error", "verdict_line": LINE_SOURCE_ERROR,
+                       "error": str(e)})
+        out_json(result)
+        audit_append({"ts": result["generated_at"], "host": socket.gethostname(),
+                      "mode": "news", "argv": sys.argv[1:], "verdict": "source_error",
+                      "raw": raw, "parsed": None})
+        return 0
+    if args.since:
+        items = [i for i in items if i["date"] >= args.since]
+        result["filter_since"] = args.since
+    result.update({"verdict": "ok", "items": items, "count": len(items),
+                   "note": "个股新闻确定性枚举（东方财富）：标题级清单，任务须逐条核对、"
+                           "相关标题点开原文核实；清单不含公告（公告走巨潮双源）。"})
+    out_json(result)
+    audit_append({"ts": result["generated_at"], "host": socket.gethostname(),
+                  "mode": "news", "argv": sys.argv[1:], "verdict": "ok",
+                  "raw": raw, "parsed": items})
+    return 0
+
+
 # ---------------------------------------------------------------- 推送对账（reconcile）
 
 # data_line 识别：以（可选的备用源前缀 +）交易所代码开头、必含"昨收"字段、
@@ -1226,7 +1292,18 @@ def reconcile_core(task_names, runs_dir, date, audit_paths):
 
     snap_runs 只计当日：它承担的是链路活性判定，与匹配集无关。节假日免特判——
     任务运行即会调用脚本（not_trading_day 也是 snap 记录），故当日 snap_runs==0
-    且零数据行 ⇔ 白天链路整体未运行，判 no_runs_data 必推。"""
+    且零数据行 ⇔ 白天链路整体未运行，判 no_runs_data 必推。
+
+    已知盲区与复读补检（2026-08-30 增）：全量精确匹配挡不住「复读」型幻觉——
+    continuity 把上次输出（含其 data_line）注入上下文，模型偷懒逐字复读历史行时，
+    该行在日志中有真实取数记录、匹配通过（防线针对 8-27 型凭空编造，防不了抄
+    上下文）。补检：同一任务导出内出现 ≥2 次的相同数据行 → echo 提示级信号，
+    不翻 mismatch verdict、不烧告警信用。分两档：快照日期=对账日的重复行
+    （echo_today）无合法形态——同任务当日两次运行取数，快照时间戳精确到秒必
+    不同，重复只能是当日行复读，强提示；历史日期的重复行（echo_prior）为弱
+    提示——除复读外还可能来自 hermes 导出本身含 continuity 注入的上下文（导出
+    格式未实证，上线首日须人工核对一次校准）。残留盲区：跨任务复读（早盘行被
+    整点任务复读，导出按任务分文件检测不到）与超出 runs 7 天保留窗的历史行复读。"""
     allowed, snap_runs = set(), 0
     for path in audit_paths:
         try:
@@ -1252,6 +1329,7 @@ def reconcile_core(task_names, runs_dir, date, audit_paths):
                         if isinstance(s, dict) and s.get("data_line"):
                             allowed.add(s["data_line"])
     tasks_out, unmatched, missing = [], [], []
+    echo_today, echo_prior = [], []
     for name in task_names:
         rel = "%s_%s.txt" % (name, date)
         path = os.path.join(runs_dir, rel)
@@ -1267,16 +1345,24 @@ def reconcile_core(task_names, runs_dir, date, audit_paths):
             text = f.read()
         if "\\u" in text:  # hermes 以 ensure_ascii JSON 导出时中文变 \uXXXX，先还原再扫
             text = RE_UNICODE_ESC.sub(lambda m: chr(int(m.group(1), 16)), text)
+        line_counts = {}
         for hit in RE_DATA_LINE.findall(text):
             hit = hit.strip()
             if not hit:
                 continue
             entry["data_lines"] += 1
+            line_counts[hit] = line_counts.get(hit, 0) + 1
             if hit in allowed:
                 entry["matched"] += 1
             else:
                 entry["unmatched"].append(hit)
                 unmatched.append({"task": name, "line": hit})
+        for ln, cnt in line_counts.items():
+            if cnt < 2:
+                continue
+            m = re.search(r"快照(\d{4}-\d{2}-\d{2})", ln)
+            slot = echo_today if (m and m.group(1) == date) else echo_prior
+            slot.append({"task": name, "count": cnt, "line": ln})
         tasks_out.append(entry)
     total_lines = sum(t["data_lines"] for t in tasks_out)
     total_matched = sum(t["matched"] for t in tasks_out)
@@ -1291,8 +1377,14 @@ def reconcile_core(task_names, runs_dir, date, audit_paths):
     summary = ("【推送对账 %s】任务 %d/%d 导出齐全，数据行 %d 条（匹配 %d、无支撑 %d），"
                "当日取数 %d 次" % (date, len(task_names) - len(missing), len(task_names),
                                   total_lines, total_matched, len(unmatched), snap_runs))
+    echo_all = echo_today + echo_prior
+    if echo_all:
+        summary += "，疑似复读 %d 条（当日 %d/历史 %d，提示级）" % (
+            len(echo_all), len(echo_today), len(echo_prior))
     return {"verdict": verdict, "summary_line": summary, "issues": unmatched,
             "missing_tasks": missing, "tasks": tasks_out,
+            "echo_today": echo_today, "echo_prior": echo_prior,
+            "echo_suspects": echo_all,
             "audit_snap_runs": snap_runs}
 
 
@@ -1782,8 +1874,45 @@ def _run_selftest():
         check("reconcile_noise_immune", res["verdict"] == "ok"
               and res["tasks"][0]["data_lines"] == 1
               and res["tasks"][0]["matched"] == 1)  # 转义行还原后匹配、引用行不计
+        # 22b) 复读补检：continuity 注入的历史行被模型逐字复读时，该行在日志中
+        #     有真实取数记录、精确匹配通过（8-27 型防线防不了抄上下文）——同一
+        #     任务导出内的重复数据行是唯一可见信号。当日行重复（echo_today）为强
+        #     提示，历史行重复（echo_prior）为弱提示；提示级不翻 mismatch verdict
+        with open(os.path.join(rdir, "任务E_2026-08-27.txt"), "w", encoding="utf-8") as f:
+            f.write("[run 08-26]\n" + yday + "\n[run 08-27 10:05]\n" + good + "\n"
+                    "[run 08-27 11:35 模型复读当日早间行]\n" + good + "\n"
+                    "[run 08-27 11:35 模型复读昨日行]\n" + yday + "\n")
+        res = reconcile_core(["任务E"], rdir, "2026-08-27", [rjson])
+        check("reconcile_echo", res["verdict"] == "ok"
+              and res["tasks"][0]["matched"] == 4
+              and len(res["echo_today"]) == 1
+              and res["echo_today"][0]["count"] == 2
+              and res["echo_today"][0]["task"] == "任务E"
+              and len(res["echo_prior"]) == 1
+              and res["echo_prior"][0]["count"] == 2
+              and len(res["echo_suspects"]) == 2
+              and "疑似复读 2 条（当日 1/历史 1，提示级）" in res["summary_line"])
     finally:
         shutil.rmtree(tmpdir2, ignore_errors=True)
+
+    # 23) 个股新闻枚举解析：标题/ShowTime/URL 提取，缺标题或畸形时间跳过、
+    #     缺 URL 保留（离线纯函数；mode_news 联网路径与 snap 同构不另测）
+    news_obj = {"data": {"list": [
+        {"Art_Title": "北部湾港中报净利5.58亿元", "Art_ShowTime": "2026-08-27 07:30:00",
+         "Art_OriginUrl": "http://finance.eastmoney.com/a/1.html"},
+        {"Art_ShowTime": "2026-08-26 23:21:36",
+         "Art_OriginUrl": "http://x/2.html"},                      # 无标题：跳过
+        {"Art_Title": "旧闻无链接", "Art_ShowTime": "2026-08-01 09:00:00"},  # 无 URL：保留
+        {"Art_Title": "畸形时间", "Art_ShowTime": "notadate"},      # 时间不可解析：跳过
+        {"Art_Title": "  ", "Art_ShowTime": "2026-08-27 08:00:00"},  # 空标题：跳过
+    ]}}
+    nitems = parse_news_items(news_obj)
+    check("news_parse", len(nitems) == 2 and nitems[0]["date"] == "2026-08-27"
+          and nitems[0]["time"] == "07:30"
+          and nitems[0]["url"].endswith("1.html")
+          and nitems[1]["title"] == "旧闻无链接" and nitems[1]["url"] == "")
+    check("news_parse_empty", parse_news_items({}) == []
+          and parse_news_items({"data": {"list": None}}) == [])
 
     print(("✅ selftest 全部通过（%d 项断言）" % passed[0]) if not fails
           else "❌ selftest 失败 %d 项：%s（通过 %d 项）"
@@ -1839,6 +1968,10 @@ def parse_args(argv):
     mp = sub.add_parser("minute", help="分时数据（--closing 为收盘竞价合成评估）")
     mp.add_argument("symbol")
     mp.add_argument("--closing", action="store_true")
+    nsp = sub.add_parser("news", help="个股新闻确定性枚举（标题级清单，召回可审计）")
+    nsp.add_argument("symbol")
+    nsp.add_argument("--since", metavar="YYYY-MM-DD", type=_valid_anchor,
+                     help="仅保留该日期（含）之后的条目（通常传上一交易日，与盘前搜索窗口同锚点）")
     ap = sub.add_parser("audit", help="审计日志只读汇总（对账用）")
     ap.add_argument("--this-week", dest="this_week", action="store_true")
     rp = sub.add_parser("reconcile", help="推送对账：任务输出数据行 vs 审计记录（幻觉检测）")
@@ -1858,7 +1991,7 @@ def main(argv=None):
         parse_args(["-h"])
         return 2
     handlers = {"snap": mode_snap, "kline": mode_kline, "minute": mode_minute,
-                "audit": mode_audit, "reconcile": mode_reconcile,
+                "news": mode_news, "audit": mode_audit, "reconcile": mode_reconcile,
                 "selftest": lambda a: _run_selftest()}
     try:
         return handlers[args.mode](args) or 0
