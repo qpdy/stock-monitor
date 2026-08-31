@@ -85,7 +85,7 @@ SYMBOL_LABELS = {
 LINE_SOURCE_ERROR = "⚠️ 数据源异常，请人工检查"
 LINE_SCRIPT_ERROR = "⚠️ 数据脚本异常，请人工检查"
 LINE_STALE_AUCTION = ("⚠️ 快照停在 {hhmm}（早于9:25撮合），本次读数可能为撮合前虚拟价，"
-                      "开盘价请以9:30开盘首笔推送为准")
+                      "开盘价请以9:42早盘监控推送为准")
 LINE_HALT_FROZEN = "⚠️ 疑似盘中临时停牌/数据冻结（快照停留在 {hhmm}），请人工核实"
 LINE_HALT_ZERO = "⚠️ 疑似停牌/数据冻结（时间戳更新但零成交），请人工核实"
 LINE_CLOSE_FAULT = "⚠️ 数据源异常（收盘数据不可用/未回补），请人工检查"
