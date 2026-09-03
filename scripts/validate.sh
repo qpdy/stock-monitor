@@ -164,3 +164,14 @@ if ! python3 "$REPO_ROOT/scripts/quote.py" selftest; then
   echo "❌ scripts/quote.py selftest 未通过"
   exit 1
 fi
+
+# 7b. 排雷脚本离线自检（2026-09-03 增：买入前排雷七项 + 长线四指标判定边界回归；
+#     手动工具非任务数据源，挂检原因同上——服务器版本须是被验证过的判定逻辑）
+if [[ ! -f "$REPO_ROOT/scripts/screen.py" ]]; then
+  echo "❌ 错误：scripts/screen.py 不存在（买入前排雷判定依赖该脚本）"
+  exit 1
+fi
+if ! python3 "$REPO_ROOT/scripts/screen.py" selftest; then
+  echo "❌ scripts/screen.py selftest 未通过"
+  exit 1
+fi
