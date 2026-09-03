@@ -71,6 +71,7 @@ ANN_URL = ("https://np-anotice-stock.eastmoney.com/api/security/ann"
            "&stock_list={code}&f_node=0&s_node=0")
 PUSH2_URL = ("https://push2.eastmoney.com/api/qt/stock/get"
              "?secid={secid}&fields=f43,f84,f85,f58")   # secid 1.沪/0.深（quote.py 同款口径）
+TENCENT_SNAP_URL = "https://qt.gtimg.cn/q={sym}"       # sym 如 sz000582（quote.py 主源，GBK 编码）
 
 LINE_SCRIPT_ERROR = "⚠️ 排雷脚本异常，请人工检查"
 
@@ -115,8 +116,9 @@ def now_bj():
     return datetime.now(CST).replace(tzinfo=None)
 
 
-def http_get(url, headers=None, timeout=10, retries=1):
-    """GET → 文本。失败抛 URLError，由 mode 层统一兜底为 script_error。"""
+def http_get(url, headers=None, timeout=10, retries=1, encoding="utf-8"):
+    """GET → 文本。失败抛 URLError，由 mode 层统一兜底为 script_error。
+    腾讯接口为 GBK 编码，经 encoding 参数指定。"""
     last = None
     for _ in range(retries + 1):
         try:
@@ -124,7 +126,7 @@ def http_get(url, headers=None, timeout=10, retries=1):
             if headers:
                 req.add_header("Referer", headers.get("Referer", ""))
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode("utf-8", "replace")
+                return resp.read().decode(encoding, "replace")
         except Exception as e:            # noqa: BLE001 记录末次异常统一上抛
             last = e
     raise last
@@ -205,11 +207,28 @@ def fetch_announcements(code, pages=8):
     return out
 
 
+def fetch_quote_fallback(code):
+    """push2 限流时的备用价/股本源：腾讯快照（quote.py 的主数据源，长期验证稳定）。
+    字段（2026-09-03 实测对账，000582）：3 现价 / 44 流通市值(亿) / 45 总市值(亿)，
+    股本 = 市值×1e8÷现价（297.02 亿 ÷ 11.80 = 25.2 亿股，与 push2 f84 一致）。"""
+    ex, _ = market_of(code)
+    try:
+        body = http_get(TENCENT_SNAP_URL.format(sym=ex + code), encoding="gbk")
+        f = body.split("~")
+        price = float(f[3])
+        return {"price": price,
+                "total_shares": round(float(f[45]) * 1e8 / price),
+                "float_shares": round(float(f[44]) * 1e8 / price),
+                "name": f[1] or None}
+    except Exception:                   # noqa: BLE001 兜底源也挂才真正降级
+        return {}
+
+
 def fetch_push2(code):
     """现价（元）/ 总股本（股）/ 流通股本（股）/ 名称。secid 用市场数字前缀并带
     Referer（实测不带 Referer 或 sh/sz 前缀返回 rc:102 data:null）。
-    该接口偶发断连限流（quote.py 亦仅作备用源），失败返回空 dict 降级——
-    仅股息率与解禁分母依赖它，降级后走 MANUAL，不阻塞其余 5 项。"""
+    push2 偶发断连限流（2026-09-03 微信会话两次触发两次断连），三败后切
+    腾讯快照兜底；兜底也挂才返回空 dict——降级项走 MANUAL，不阻塞其余项。"""
     ex, _ = market_of(code)
     secid = ("1." if ex == "sh" else "0.") + code
     for _ in range(3):
@@ -219,11 +238,12 @@ def fetch_push2(code):
             d = _jget(obj, "data", default={}) or {}
             price = d.get("f43")
             price = price / 100.0 if isinstance(price, (int, float)) else None   # 价格 ×100 缩放（quote.py 同款）
-            return {"price": price, "total_shares": d.get("f84"),
-                    "float_shares": d.get("f85"), "name": d.get("f58")}
-        except Exception:               # noqa: BLE001 限流抖动重试，末次仍败则降级
+            if price:
+                return {"price": price, "total_shares": d.get("f84"),
+                        "float_shares": d.get("f85"), "name": d.get("f58")}
+        except Exception:               # noqa: BLE001 限流抖动重试，末次切兜底源
             continue
-    return {}
+    return fetch_quote_fallback(code)
 
 
 # ---------------------------------------------------------------- 判定逻辑 ----
@@ -428,16 +448,20 @@ def check_dividend(div_rows, cash_rows, income_rows, bal_rows, price, total_shar
 
 
 def check_report_window(appoint_rows, today):
-    """财报窗口：当年各报告期预约/实际披露日，未来 7 天内将披露 → WARN 禁开仓。"""
+    """财报窗口：各报告期预约/实际披露日，未来 7 天内将披露 → WARN 禁开仓。
+    预约表无未来日期（三季报预约日通常 9 月中下旬才录入）→ 显式 PASS 而非
+    静默省略，让读者分得清"已查、无窗口"与"未检查"；接口无返回 → MANUAL。"""
+    if not appoint_rows:
+        return "MANUAL", "预约披露数据缺失（接口无返回）"
     futures = []
-    for r in appoint_rows or []:
+    for r in appoint_rows:
         d = str(r.get("ACTUAL_PUBLISH_DATE")
                 or r.get("FIRST_APPOINT_DATE") or "")[:10]
         if d >= today.strftime("%Y-%m-%d"):
             futures.append((d, "%s 年报" % r.get("REPORT_YEAR", "?")))
     futures.sort()
     if not futures:
-        return None
+        return "PASS", "预约表无未来披露日——已预约报告期均已披露，下批预约日待交易所更新"
     d, label = futures[0]
     days = (datetime.strptime(d, "%Y-%m-%d") - today).days
     if days <= THRESH["report_gap_days"]:
@@ -563,8 +587,10 @@ def _run_selftest():
     """离线判定逻辑测试（构造固定行数据，不联网）。"""
     today = datetime(2026, 9, 3)
     fails = []
+    n_checks = [0]
 
     def eq(name, got, want):
+        n_checks[0] += 1
         if got != want:
             fails.append("%s: got %r want %r" % (name, got, want))
 
@@ -626,11 +652,15 @@ def _run_selftest():
     eq("ar-warn", check_ar_inventory(
         {"ACCOUNTS_RECE": 1.4e8}, {"ACCOUNTS_RECE": 1e8}, i_n, i_p)[0], "WARN")
 
-    # 财报窗口：3 天后披露 WARN；60 天后 PASS
+    # 财报窗口：3 天后披露 WARN；60 天后 PASS；
+    # 无未来披露日（已披露+下批预约未出）显式 PASS；接口空 → MANUAL
     eq("rw-warn", check_report_window(
         [{"REPORT_YEAR": "2026", "ACTUAL_PUBLISH_DATE": "2026-09-06"}], today)[0], "WARN")
     eq("rw-pass", check_report_window(
         [{"REPORT_YEAR": "2026", "ACTUAL_PUBLISH_DATE": "2026-11-02"}], today)[0], "PASS")
+    eq("rw-none-future", check_report_window(
+        [{"REPORT_YEAR": "2026", "ACTUAL_PUBLISH_DATE": "2026-08-18"}], today)[0], "PASS")
+    eq("rw-manual-empty", check_report_window([], today)[0], "MANUAL")
 
     # 连续派息：2020-2025 六连发（构造进 check_dividend 太重，只测年份数列逻辑外的快速路径）
     eq("market-60", market_of("600000"), ("sh", "main"))
@@ -642,7 +672,7 @@ def _run_selftest():
         for f in fails:
             print("  " + f)
         return 1
-    print("selftest OK: 排雷判定 24 项边界全部通过")
+    print("selftest OK: 排雷判定 %d 项边界全部通过" % n_checks[0])
     return 0
 
 
