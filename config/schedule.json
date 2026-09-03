@@ -2,101 +2,121 @@
   {
     "name": "北部湾港-盘前情报",
     "cron": "50 8 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/pre_market.md",
     "deliver": "weixin",
     "continuity": true,
-    "event_calendar": true
+    "event_calendar": true,
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。"
   },
   {
     "name": "北部湾港-竞价结果",
     "cron": "25 9 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/auction_result.md",
     "deliver": "weixin",
     "disclaimer": false,
     "event_calendar": true,
-    "replaces": ["北部湾港-竞价初始", "北部湾港-开盘首笔"],
-    "_comment": "缺口警示（|开盘涨跌幅|>=3% 必推）与事件窗口承接定性反转依赖日历注入；disclaimer 维持 false（纯快照任务信噪比）。replaces：2026-08-31 精简竞价三连时删除的两任务（竞价初始 9:16 虚拟价可撤单、开盘首笔 9:30 与竞价结果重叠），REPLACE 部署时自动清理 hermes 侧残留"
+    "replaces": [
+      "北部湾港-竞价初始",
+      "北部湾港-开盘首笔"
+    ],
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。缺口警示（|开盘涨跌幅|>=3% 必推）与事件窗口承接定性反转依赖日历注入；disclaimer 维持 false（纯快照任务信噪比）。replaces：2026-08-31 精简竞价三连时删除的两任务（竞价初始 9:16 虚拟价可撤单、开盘首笔 9:30 与竞价结果重叠），REPLACE 部署时自动清理 hermes 侧残留"
   },
   {
     "name": "北部湾港-盘中监控-早盘",
     "cron": "42 9 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/intraday_monitor.md",
     "deliver": "weixin",
     "continuity": true,
     "disclaimer": false,
-    "_comment": "早盘定型窗口（9:30–10:00）定性采样，开盘后首个盘中采样点，亦为一字板特判的首报锚点（2026-08-31 开盘首笔任务删除后，由本任务承接开盘确认）"
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。早盘定型窗口（9:30–10:00）定性采样，开盘后首个盘中采样点，亦为一字板特判的首报锚点（2026-08-31 开盘首笔任务删除后，由本任务承接开盘确认）"
   },
   {
     "name": "北部湾港-盘中监控",
     "cron": "5,35 10,11,13,14 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/intraday_monitor.md",
     "deliver": "weixin",
     "continuity": true,
     "disclaimer": false,
-    "_comment": "事件窗口（2026-08-26 至 2026-09-22）临时加密为半小时频率；窗口结束改回 5 10,11,13,14，部署健康检查会提醒"
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。事件窗口（2026-08-26 至 2026-09-22）临时加密为半小时频率；窗口结束改回 5 10,11,13,14，部署健康检查会提醒"
   },
   {
     "name": "北部湾港-收盘竞价监控",
     "cron": "2 15 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/closing_auction.md",
     "deliver": "weixin",
     "disclaimer": false,
-    "_comment": "静默型：14:30→收盘位移分层阈值（A≤2 取 1%、A>2 取 1.5%）+ 极值半阈值放宽档 + 2% 绝对档；分时/快照接口失败 ⚠️ 必推（静默型任务的数据失效必须可见）"
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。静默型：14:30→收盘位移分层阈值（A≤2 取 1%、A>2 取 1.5%）+ 极值半阈值放宽档 + 2% 绝对档；分时/快照接口失败 ⚠️ 必推（静默型任务的数据失效必须可见）"
   },
   {
     "name": "北部湾港-午间舆情",
     "cron": "40 12 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/noon_sentiment.md",
     "deliver": "weixin",
-    "event_calendar": true
+    "event_calendar": true,
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。"
   },
   {
     "name": "北部湾港-盘中监控-尾盘",
     "cron": "50 14 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/intraday_monitor.md",
     "deliver": "weixin",
     "continuity": true,
-    "disclaimer": false
+    "disclaimer": false,
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。"
   },
   {
     "name": "北部湾港-收盘复盘",
     "cron": "0 18 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/closing_review.md",
     "deliver": "weixin",
     "continuity": true,
-    "event_calendar": true
+    "event_calendar": true,
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。"
   },
   {
     "name": "北部湾港-晚间风险预警",
     "cron": "30 21 * * 1,2,3,4,5",
+    "paused": true,
     "prompt_file": "tasks/000582/evening_alert.md",
     "deliver": "weixin",
     "continuity": true,
     "disclaimer": false,
-    "event_calendar": true
+    "event_calendar": true,
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。"
   },
   {
     "name": "北部湾港-周度复盘",
     "cron": "0 10 * * 6",
+    "paused": true,
     "prompt_file": "tasks/000582/weekly_review.md",
     "deliver": "weixin",
-    "_comment": "周六复盘本周各监控任务推送与后续走势，纯事实陈列、不给阈值调整建议（周样本量小，结论留给人）；零推送周输出确认行，作为本审计任务自身运行的确认信号"
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。周六复盘本周各监控任务推送与后续走势，纯事实陈列、不给阈值调整建议（周样本量小，结论留给人）；零推送周输出确认行，作为本审计任务自身运行的确认信号"
   },
   {
     "name": "北部湾港-周末舆情-周六",
     "cron": "0 22 * * 6",
+    "paused": true,
     "prompt_file": "tasks/000582/weekend_sentiment.md",
     "deliver": "weixin",
     "event_calendar": true,
-    "_comment": "周末休市期公告/新闻增量监控 + 推送通道保活（iLink context_token 24h 无消息失效死锁，2026-08-30 事故实证）。必推型：无事件也推一行确认（周末通道心跳）。周六 22:00（2026-08-30 由 19:30 后移）：贴交易所晚间披露高峰（20:00–22:00）结束点取覆盖最大值；距周六 10:00 周度复盘 12h、距周日 21:00 档 23h，均在 24h 窗口内留余量"
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。周末休市期公告/新闻增量监控 + 推送通道保活（iLink context_token 24h 无消息失效死锁，2026-08-30 事故实证）。必推型：无事件也推一行确认（周末通道心跳）。周六 22:00（2026-08-30 由 19:30 后移）：贴交易所晚间披露高峰（20:00–22:00）结束点取覆盖最大值；距周六 10:00 周度复盘 12h、距周日 21:00 档 23h，均在 24h 窗口内留余量"
   },
   {
     "name": "北部湾港-周末舆情-周日",
     "cron": "0 21 * * 0",
+    "paused": true,
     "prompt_file": "tasks/000582/weekend_sentiment.md",
     "deliver": "weixin",
     "event_calendar": true,
-    "_comment": "同周六档。周日 21:00（2026-08-30 由 18:30 后移）：距周六 22:00 间隔 23h（<24h 留 1h 余量），距周一 8:50 盘前情报 11.8h——封死周日零消息导致的周一晨 token 失效缺口；21:00 后的披露增量由周一盘前情报兜底。搜索链路（EXA key / curl allowlist）修复前会持续推 ⚠️ 数据源异常，兼任链路周末健康探测。周日用 0 而非 7（0 为所有 cron 实现均认的传统写法，7 是 POSIX 扩展）"
+    "_comment": "⏸ 2026-09-03 暂停（paused: true，部署后 deploy.sh 自动 hermes cron pause；恢复=删除本字段后 push）。同周六档。周日 21:00（2026-08-30 由 18:30 后移）：距周六 22:00 间隔 23h（<24h 留 1h 余量），距周一 8:50 盘前情报 11.8h——封死周日零消息导致的周一晨 token 失效缺口；21:00 后的披露增量由周一盘前情报兜底。搜索链路（EXA key / curl allowlist）修复前会持续推 ⚠️ 数据源异常，兼任链路周末健康探测。周日用 0 而非 7（0 为所有 cron 实现均认的传统写法，7 是 POSIX 扩展）"
   },
   {
     "name": "推送对账",

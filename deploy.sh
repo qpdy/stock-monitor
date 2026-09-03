@@ -174,6 +174,8 @@ for i, task in enumerate(tasks, 1):
         tags = ("（含事件日历）" if calendar_text else "") + ("（含公共声明）" if use_disclaimer else "")
         print(f"    将执行: hermes cron create \"{task['cron']}\" \"<{len(prompt)}字{tags}"
               + f" prompt>\" --name \"{name}\"" + extra)
+        if task.get("paused"):
+            print(f"    将执行: hermes cron pause \"{name}\"（schedule.json paused: true）")
         done.append(name)
         continue
 
@@ -215,6 +217,24 @@ for i, task in enumerate(tasks, 1):
         continue
     if result.returncode == 0:
         print(f"    ✓ 创建成功")
+        # paused: true → create 后立即 pause（REPLACE 重装幂等：每次 create→pause，
+        # 暂停状态不会因重装丢失）。pause 失败 = 任务以活跃状态运行（未暂停），
+        # 计入 failed 醒目提示——此时任务按原 cron 推送，必须人工介入。
+        if task.get("paused"):
+            try:
+                pr = subprocess.run(["hermes", "cron", "pause", name], capture_output=True,
+                                    text=True, encoding="utf-8", errors="replace", timeout=300)
+            except subprocess.TimeoutExpired:
+                print(f"    ✗ pause 超时（>300s）：任务 {name} 处于活跃状态，须人工 hermes cron pause")
+                failed.append(name)
+                continue
+            if pr.returncode == 0:
+                print(f"    ⏸ 已暂停: {name}")
+            else:
+                perr = pr.stderr.strip() or pr.stdout.strip() or "未知错误"
+                print(f"    ✗ pause 失败: {perr}——任务 {name} 处于活跃状态，须人工 hermes cron pause")
+                failed.append(name)
+                continue
         done.append(name)
     else:
         err = (result.stderr.strip() or result.stdout.strip() or "未知错误")
