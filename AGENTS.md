@@ -9,6 +9,9 @@
 
 ## 排雷指令（微信触发）
 
+> 微信 gateway 会话的排雷规程由 skill 承载：`skills/china-stock-due-diligence/SKILL.md`
+> （服务器上软链到 ~/.hermes/skills/ 生效）。改本节须同步改该 skill，两处保持一致。
+
 - 会话起始目录可能在 `/home/ubuntu`（家目录）而非本仓库——收到排雷请求后**先 `cd /home/ubuntu/stock-monitor` 再执行**：
   `python3 scripts/screen.py check <代码>`
 - 代码一律转成**纯 6 位数字**（如 `600000`）；用户消息带 sh/sz 前缀或其他写法时自动剥掉重跑，**不要反问用户**
