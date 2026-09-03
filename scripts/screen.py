@@ -560,22 +560,28 @@ def run_check(code, as_json=False):
                 "board": board, "data_notice": "公告扫描非全量源；北交所退市口径未覆盖"
                 if board == "bj" else "公告扫描非全量源"}
 
-    # 文本报告
+    # 文本报告（行式格式：不依赖等宽对齐——微信非等宽渲染下空格对齐会错位）
     lines = ["排雷报告 %s %s · %s" % (code, meta.get("name") or "", today.strftime("%Y-%m-%d")),
              "口径：财务数据取最新定期报告；公告扫描非全量源，MANUAL 项须巨潮人工复核"]
-    for item, st, v, detail in checks:
+
+    def _fmt_line(item, st, v, detail, unit="%"):
         mark = {"PASS": "PASS", "FAIL": "FAIL", "WARN": "⚠ WARN",
-                "MANUAL": "☐ MANUAL", "NA": "N/A "}[st]
-        lines.append("%-14s %-9s %8s  %s" % (item, mark, fmt_val(v), detail))
+                "MANUAL": "☐ MANUAL", "NA": "N/A"}[st]
+        head = "%s：%s" % (item, mark)
+        if v is not None:
+            head += " " + fmt_val(v, unit)
+        return " —— ".join(x for x in (head, detail) if x)
+
+    for item, st, v, detail in checks:
+        lines.append(_fmt_line(item, st, v, detail))
+    lines.append("")
     lines.append("── 长线红利层选股指标（trading-long-term.md 1.2，非中线必查项）")
     for item, st, v, detail in dividend:
-        mark = {"PASS": "PASS", "FAIL": "FAIL", "WARN": "⚠ WARN",
-                "MANUAL": "☐ MANUAL", "NA": "N/A "}[st]
-        val = fmt_val(v, "倍" if item == "分红覆盖" else ("年" if item == "连续派息" else "%"))
-        lines.append("%-14s %-9s %8s  %s" % (item, mark, val, detail))
+        unit = "倍" if item == "分红覆盖" else ("年" if item == "连续派息" else "%")
+        lines.append(_fmt_line(item, st, v, detail, unit))
     if report_win:
-        lines.append("── 财报窗口: %s" % report_win[1])
-    lines.append("结论: %s" % summary)
+        lines.append("── 财报窗口：%s" % report_win[1])
+    lines.append("结论：%s" % summary)
     if counts.get("FAIL"):
         lines.append("⛔ 存在 FAIL 项——按纪律任一命中不买（trading-mid-term.md 2.2）")
     return "\n".join(lines)
